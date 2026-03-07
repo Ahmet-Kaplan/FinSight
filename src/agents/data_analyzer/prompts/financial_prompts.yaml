@@ -10,6 +10,20 @@ data_analysis: |
   - For Chinese (zh): Use Chinese (中文) for all report content
   This language requirement applies to your final <report> output only. During the analysis process (<execute> blocks), you may use English for code and comments.
 
+  ## Analysis Discipline
+  - Use the datasets provided in the data catalog FIRST before calling external search tools.
+  - Only call `get_data_from_deep_search` when specific evidence is genuinely missing from collected data.
+  - Do NOT fabricate statistics or assume values that are not in the data.
+  - Extract and compute metrics from structured datasets (DataFrames) before writing narrative.
+  - Prefer tables and structured summaries before generating chart placeholders.
+  - Each chart placeholder must reference a specific variable that EXISTS in the environment.
+
+  ## Search Limitation
+  - You have access to pre-collected datasets. Use them FIRST.
+  - Call `get_data_from_deep_search` at most 2 times per analysis task.
+  - Do NOT use deep search to re-fetch data that already exists in collect_data_list.
+  - If you have structured data (DataFrames) covering the topic, prefer computing from them over searching.
+
   ## Interaction flow
   1. **Frame the problem** – restate the assignment, identify the financial concepts, and outline the analytical spine you plan to follow.
   2. **Choose an action per round**
@@ -56,6 +70,20 @@ data_analysis_wo_chart: |
   - For English (en): Write the entire report in English
   - For Chinese (zh): Write the entire report in Chinese (中文)
   During the analysis process (<execute> blocks), you may use English for code and comments, but the final report content must be in {target_language}.
+
+  ## Analysis Discipline
+  - Use the datasets provided in the data catalog FIRST before calling external search tools.
+  - Only call `get_data_from_deep_search` when specific evidence is genuinely missing from collected data.
+  - Do NOT fabricate statistics or assume values that are not in the data.
+  - Extract and compute metrics from structured datasets (DataFrames) before writing narrative.
+  - Prefer tables and structured summaries before generating chart placeholders.
+  - Each chart placeholder must reference a specific variable that EXISTS in the environment.
+
+  ## Search Limitation
+  - You have access to pre-collected datasets. Use them FIRST.
+  - Call `get_data_from_deep_search` at most 2 times per analysis task.
+  - Do NOT use deep search to re-fetch data that already exists in collect_data_list.
+  - If you have structured data (DataFrames) covering the topic, prefer computing from them over searching.
 
   ## Analysis Process
   Each interaction round follows these steps:
@@ -298,9 +326,9 @@ draw_chart: |
   1. **Image Size Requirements:** Recommended size is 5 inches * 3 inches, DPI 500, while balancing aesthetics. The image must be saved in PNG format.
   2. **Color Scheme Requirements:** Use the provided color palette for elements (axis colors do not need to change). Please ensure the overall color scheme is unified.
   3. **Layout Requirements:** Ensure the legend is inside the chart. Do not include a chart title or borders. Ensure there is no excess whitespace around the image. Use `plt.tight_layout()` to adjust the chart layout.
-  4. **Font Requirements:** **The font in the image needs to be Chinese.** Font sizes must be unified. Use the `SimHei` font with a font size of 10-15.
+  4. **Font Requirements:** {label_language_instruction} Font sizes must be unified. Use the `{chart_font}` font with size 10-15.
   5. **Data Processing Requirements:** Data in the image needs to be displayed aesthetically without overlapping. Adjust data label positions if necessary. For date and time data, ensure the format is correct and contains no redundant information.
-  6. **Data Label Requirements:** Data labels must be in Chinese and match the data type (e.g., use integers to represent years). If label fonts are too long, rotate them to ensure aesthetics.
+  6. **Data Label Requirements:** Data labels must match the report language ({target_language}). Match the data type (e.g., use integers to represent years). If label fonts are too long, rotate them to ensure aesthetics.
   7. **Image Saving Requirements:** Save to the `session_output_dir` path, set DPI to 500, and ensure no white borders before saving. When saving, use double quotes for strings.
 
   **Other Requirements:**
@@ -309,12 +337,18 @@ draw_chart: |
   * Value Formatting: Use units like "Wan" (Ten Thousand) or "Yi" (100 Million) for large numbers, keeping 2 decimal places.
   * Ensure the aesthetics of the chart; avoid overlapping, overcrowding, or having only a single column of data. For text-heavy charts, consider text layout and spacing between rows and columns to avoid text overlap.
 
+  ## Data Integrity Rules
+  - You may ONLY use variables and data that already exist in the Python environment.
+  - Do NOT fabricate, assume, or invent data values for charts.
+  - If the required data for a chart does not exist in variables, output "SKIP: insufficient data for this chart" instead of generating code.
+  - Do NOT create pie charts from guessed category proportions unless the data is explicitly available.
+
   Before drawing for the first time, please **use the following code to set the image style**:
 
   ```python
   import seaborn as sns
   sns.set_style({{
-      'font.family': 'SimHei',  # Directly specify Chinese font
+      'font.family': '{chart_font}',  # Specify chart font
       'axes.unicode_minus': False  # Fix minus sign display
   }})
   # Color Palette

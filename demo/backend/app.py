@@ -12,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import uvicorn
+from dotenv import load_dotenv
+load_dotenv()
 
 # Add project root to path
 root = str(Path(__file__).resolve().parents[2])
@@ -218,6 +220,71 @@ async def update_config(config: SystemConfig):
     global current_config
     current_config = config
     return {"status": "success", "message": "Configuration updated in memory"}
+
+
+class PlannerRequest(BaseModel):
+    user_request: str
+
+
+@app.post("/api/planner/generate")
+async def generate_plan(request: PlannerRequest):
+    """Use the PlannerAgent to turn a free-form request into a pipeline config."""
+    global current_config, current_tasks
+
+    from src.planner import PlannerAgent
+
+    planner = PlannerAgent()
+    config = planner.generate_config(request.user_request)
+    yaml_dict = planner.config_to_yaml_dict(config)
+
+    # Build LLMConfig list from the yaml_dict env-var placeholders,
+    # resolving them so the frontend gets usable values.
+    llm_configs = []
+    for llm_entry in yaml_dict.get("llm_config_list", []):
+        resolved_model = os.getenv(
+            llm_entry["model_name"].strip("${}"),
+            llm_entry["model_name"],
+        ) if llm_entry["model_name"].startswith("$") else llm_entry["model_name"]
+        resolved_key = os.getenv(
+            llm_entry["api_key"].strip("${}"),
+            llm_entry["api_key"],
+        ) if llm_entry["api_key"].startswith("$") else llm_entry["api_key"]
+        resolved_url = os.getenv(
+            llm_entry["base_url"].strip("${}"),
+            llm_entry["base_url"],
+        ) if llm_entry["base_url"].startswith("$") else llm_entry["base_url"]
+        llm_configs.append(LLMConfig(
+            model_name=resolved_model,
+            api_key=resolved_key,
+            base_url=resolved_url,
+            generation_params=llm_entry.get("generation_params", {}),
+        ))
+
+    # Populate global SystemConfig
+    current_config = SystemConfig(
+        target_name=yaml_dict["target_name"],
+        stock_code=yaml_dict.get("stock_code", ""),
+        output_dir=yaml_dict.get("output_dir", "outputs/demo"),
+        reference_doc_path=yaml_dict.get("reference_doc_path", "src/template/report_template.docx"),
+        outline_template_path=yaml_dict.get("outline_template_path", "src/template/company_outline.md"),
+        llm_configs=llm_configs,
+        ds_model_name=os.getenv("DS_MODEL_NAME", ""),
+        vlm_model_name=os.getenv("VLM_MODEL_NAME", ""),
+        embedding_model_name=os.getenv("EMBEDDING_MODEL_NAME", ""),
+    )
+
+    # Populate global tasks
+    collect_tasks = [
+        Task(id=f"collect_{i}", type="collect", content=t)
+        for i, t in enumerate(yaml_dict.get("custom_collect_tasks", []))
+    ]
+    analysis_tasks = [
+        Task(id=f"analysis_{i}", type="analyze", content=t)
+        for i, t in enumerate(yaml_dict.get("custom_analysis_tasks", []))
+    ]
+    current_tasks = TaskList(collect_tasks=collect_tasks, analysis_tasks=analysis_tasks)
+
+    return {"config": yaml_dict, "status": "success"}
 
 
 @app.post("/api/config/save")

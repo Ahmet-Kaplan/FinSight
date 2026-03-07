@@ -41,11 +41,17 @@ class DeepSearchAgent(BaseAgent):
         self.prompt_loader = get_prompt_loader('search_agent', report_type='general')
         self.DEEP_SEARCH_PROMPT = self.prompt_loader.get_prompt('deep_search')
         self.link2name = {}
-        
+
         # Track all valid links from search results for validation
         self.valid_links = {}  # {url: {title, description, query}}
         # Track sources actually used (clicked/browsed)
         self.used_sources = {}  # {url: {title, content_summary}}
+        # Track consecutive failed clicks
+        self.failed_clicks = 0
+        # Track executed search queries for deduplication
+        self.search_queries = []
+        # Track consecutive searches returning no new unique URLs
+        self.no_new_info_count = 0
     
     
     async def _prepare_init_prompt(self, input_data: dict) -> list[dict]:
@@ -91,6 +97,27 @@ class DeepSearchAgent(BaseAgent):
     async def _handle_search_action(self, action_content):
         search_engine = [item for item in self.tools if 'search' in item.name.lower()][0]
         self.logger.info(f"Search action started: query={action_content}")
+
+        # --- Query deduplication: skip near-duplicate queries ---
+        query_lower = action_content.strip().lower()
+        for prev_query in self.search_queries:
+            prev_lower = prev_query.strip().lower()
+            if query_lower in prev_lower or prev_lower in query_lower:
+                self.logger.info(f"Duplicate query detected: '{action_content}' ~ '{prev_query}'")
+                result = (
+                    f"⚠️ The query `{action_content}` is too similar to a previous query "
+                    f"`{prev_query}`. Please try a substantially different query to find "
+                    f"new information, or proceed to writing your report."
+                )
+                return {
+                    "action": "search",
+                    "action_content": action_content,
+                    "result": result,
+                    "continue": True
+                }
+        # Record this query
+        self.search_queries.append(action_content)
+
         try:
             search_result = await search_engine.api_function(action_content)
             search_result_list = []
@@ -98,7 +125,8 @@ class DeepSearchAgent(BaseAgent):
                 result = f"Query `{action_content}` returned no results; please try again."
             else:
                 result = f"Search results for `{action_content}`\n"
- 
+                new_unique_urls = 0
+
                 for idx, item in enumerate(search_result):
                     title = item.name
                     link = item.link
@@ -110,6 +138,9 @@ class DeepSearchAgent(BaseAgent):
                         'description': description
                     })
                     self.link2name[link] = title
+                    # Count URLs not already in valid_links
+                    if link not in self.valid_links:
+                        new_unique_urls += 1
                     # Track this as a valid link for later validation
                     self.valid_links[link] = {
                         'title': title,
@@ -120,31 +151,43 @@ class DeepSearchAgent(BaseAgent):
                     result += f"Title: {title}\n"
                     result += f"Link: {link}\n"
                     result += f"Summary: {description}\n\n"
-                    
+
+                # Track whether this search returned any genuinely new URLs
+                if new_unique_urls == 0:
+                    self.no_new_info_count += 1
+                else:
+                    self.no_new_info_count = 0
+
+                if self.no_new_info_count >= 2:
+                    result += (
+                        "\n\n⚠️ The last 2+ searches returned no new unique URLs. "
+                        "Consider writing your final report with the evidence already available."
+                    )
+
             for search_item in search_result:
                 self.memory.add_data(search_item)
             self.memory.add_log(
-                id = search_engine.id, 
+                id = search_engine.id,
                 type=search_engine.type,
-                input_data = {'query': action_content}, 
-                output_data = {'result': search_result_list}, 
-                error=False, 
+                input_data = {'query': action_content},
+                output_data = {'result': search_result_list},
+                error=False,
                 note=f"Search engine {search_engine.name} executed successfully"
             )
             self.logger.info(f"Search action done: query={action_content}")
-                
+
         except Exception as e:
             result = f"Query `{action_content}` failed with error: {str(e)}. Please retry."
             self.memory.add_log(
-                id = search_engine.id, 
+                id = search_engine.id,
                 type=search_engine.type,
-                input_data = {'query': action_content}, 
-                output_data = {"result": result}, 
-                error=True, 
+                input_data = {'query': action_content},
+                output_data = {"result": result},
+                error=True,
                 note=f"Search engine {search_engine.name} executed failed: {str(e)}"
             )
             self.logger.error(f"Search action failed: query={action_content}, error={e}", exc_info=True)
-        
+
         # On the last iteration, append available sources reminder
         if self.current_round >= (self.max_iterations - 1):
             result += "\n\n⚠️ You have reached the maximum number of running iterations. Please provide your final report now."
@@ -189,6 +232,7 @@ class DeepSearchAgent(BaseAgent):
             click_result = await click_engine.api_function([action_content], f'Research goal: {current_task}; query: {query}')
             if len(click_result) == 0:
                 result = "Failed to fetch content for url: " + action_content
+                self.failed_clicks += 1
             else:
                 result = click_result[0].data
                 # Track this as a used source with content summary
@@ -197,11 +241,12 @@ class DeepSearchAgent(BaseAgent):
                     'title': source_title,
                     'content_preview': result[:500] if len(result) > 500 else result
                 }
-            # add to memory
-            if click_result[0].link in self.link2name:
-                click_result[0].name = self.link2name[click_result[0].link]
-            if not ('error' in click_result[0].name.lower()):
-                self.memory.add_data(click_result[0])
+                # add to memory
+                if click_result[0].link in self.link2name:
+                    click_result[0].name = self.link2name[click_result[0].link]
+                if not ('error' in click_result[0].name.lower()):
+                    self.memory.add_data(click_result[0])
+                self.failed_clicks = 0
             self.memory.add_log(
                 id = click_engine.id, 
                 type=click_engine.type,
@@ -215,21 +260,30 @@ class DeepSearchAgent(BaseAgent):
         except Exception as e:
             result =  "Failed to fetch url: " + action_content + "\n"
             result += f'Error: {e}'
+            self.failed_clicks += 1
             self.memory.add_log(
-                id = click_engine.id, 
+                id = click_engine.id,
                 type=click_engine.type,
-                input_data = {'url': action_content}, 
-                output_data = {"result": result}, 
-                error=True, 
+                input_data = {'url': action_content},
+                output_data = {"result": result},
+                error=True,
                 note=f"Click engine {click_engine.name} executed failed: {str(e)}"
             )
             self.logger.error(f"Click action failed: url={action_content}, error={e}", exc_info=True)
-        
+
+        # Warn after 3+ consecutive failed clicks
+        if self.failed_clicks >= 3:
+            result += (
+                "\n\n⚠️ WARNING: 3 or more consecutive click attempts have failed. "
+                "Please try different URLs from the search results, perform a new search, "
+                "or move on to writing your final report with the evidence already gathered."
+            )
+
         # On the last iteration, append available sources reminder
         if self.current_round >= (self.max_iterations - 1):
             result += "\n\n⚠️ You have reached the maximum number of running iterations. Please provide your final report now."
             result += self._build_available_sources_list()
-            
+
         return {
             "action": "click",
             "action_content": action_content,
@@ -275,18 +329,24 @@ class DeepSearchAgent(BaseAgent):
         }
     
     def _get_persist_extra_state(self) -> dict:
-        """Persist valid_links and used_sources for resume support."""
+        """Persist valid_links, used_sources, and tracking counters for resume support."""
         return {
             'valid_links': self.valid_links,
             'used_sources': self.used_sources,
             'link2name': self.link2name,
+            'failed_clicks': self.failed_clicks,
+            'search_queries': self.search_queries,
+            'no_new_info_count': self.no_new_info_count,
         }
-    
+
     def _load_persist_extra_state(self, state: dict):
-        """Restore valid_links and used_sources from checkpoint."""
+        """Restore valid_links, used_sources, and tracking counters from checkpoint."""
         self.valid_links = state.get('valid_links', {})
         self.used_sources = state.get('used_sources', {})
         self.link2name = state.get('link2name', {})
+        self.failed_clicks = state.get('failed_clicks', 0)
+        self.search_queries = state.get('search_queries', [])
+        self.no_new_info_count = state.get('no_new_info_count', 0)
 
     async def async_run(
         self, 

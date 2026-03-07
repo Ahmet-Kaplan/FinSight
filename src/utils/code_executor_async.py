@@ -116,16 +116,13 @@ class AsyncCodeExecutor:
             import matplotlib.pyplot as plt
             import matplotlib
             import matplotlib.font_manager as fm
-            # font_path = os.path.join(os.path.dirname(__file__), 'fonts', 'kt_font.ttf')
-            
-            # if os.path.exists(font_path):
-            #     fm.fontManager.addfont(font_path)
-            #     font_prop = fm.FontProperties(fname=font_path)
-            #     custom_font_name = font_prop.get_name()
-            #     matplotlib.rcParams['font.family'] = custom_font_name
-            #     matplotlib.rcParams['font.sans-serif'] = [custom_font_name, 'SimHei', 'Arial Unicode MS']
-            # else:
-            matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'sans-serif']
+            # Use safe font detection — avoids hardcoding SimHei which crashes on non-CJK systems
+            from src.utils.chart_utils import detect_available_font
+            _safe_font = detect_available_font([
+                'SimHei', 'KaiTi', 'Noto Sans CJK SC', 'PingFang SC',
+                'Arial Unicode MS', 'DejaVu Sans',
+            ]) or 'sans-serif'
+            matplotlib.rcParams['font.sans-serif'] = [_safe_font, 'sans-serif']
             matplotlib.rcParams['axes.unicode_minus'] = False
             context.update({
                 'pd': pd,
@@ -331,7 +328,8 @@ class AsyncCodeExecutor:
         stdout_capture = io.StringIO()
         stderr_capture = io.StringIO()
         has_error = False
-        header = "import matplotlib.pyplot as plt; plt.rcParams['font.sans-serif'] = ['SimHei']; plt.rcParams['axes.unicode_minus'] = False"       
+        # Safe font header — LLM-generated chart code sets the correct font via prompt instructions
+        header = "import matplotlib.pyplot as plt; plt.rcParams['axes.unicode_minus'] = False"
         code = header + '\n' + code
         # Wrap exec so it can run inside a thread
         def sync_exec():
@@ -376,6 +374,13 @@ class AsyncCodeExecutor:
                 # Remove the coroutine to avoid reruns
                 del self.globals['async_main']
         
+        # Close all matplotlib figures to prevent memory leaks during long runs
+        try:
+            import matplotlib.pyplot as _plt_cleanup
+            _plt_cleanup.close('all')
+        except Exception:
+            pass
+
         stdout = stdout_capture.getvalue()
         stderr = stderr_capture.getvalue()
         if stdout == "":

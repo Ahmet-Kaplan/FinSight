@@ -58,6 +58,7 @@ https://github.com/user-attachments/assets/41963369-3dd4-4dfd-ad95-ef95cd092ebb
 - [🏗️ Architecture](#-architecture)
 - [📖 Advanced Usage](#-advanced-usage)
 - [📊 Evaluation Results](#-evaluation-results)
+- [🔧 Recent Hardening & Planner Agent](#recent-hardening--planner-agent)
 - [📜 License](#-license)
 - [📖 Citation](#-citation)
 - [🙏 Acknowledgments](#-acknowledgments)
@@ -99,6 +100,10 @@ FinSight is still under development and there are many issues and room for impro
 - [x] Code execution sandbox hardening (timeouts, restricted imports)
 - [x] Rate limiter for API calls
 - [x] CI/CD pipeline (GitHub Actions)
+- [x] YAML curation agent (Planner) — auto-generate config from natural language
+- [x] Global language control — chart labels, prompts, reports match `language` setting
+- [x] Runtime hardening — safe tool results, dedup, download handling, resource cleanup
+- [x] Run completion contract (`run_manifest.json` per pipeline run)
 
 ---
 
@@ -977,6 +982,79 @@ If you find FinSight useful in your research, please cite our paper:
 - [AkShare](https://akshare.akfamily.xyz/) for financial data APIs
 - [eFinance](https://github.com/mpquant/efinance) for stock data
 - [Crawl4AI](https://github.com/unclecode/crawl4ai) for web crawling
+
+---
+
+## Recent Hardening & Planner Agent
+
+### YAML Curation Agent (Planner)
+
+The Planner agent accepts a natural-language research request and produces a
+validated `my_config.yaml` through an LLM call followed by Pydantic schema
+validation. If the generated YAML fails validation the agent retries
+automatically.
+
+| Interface | Usage |
+|-----------|-------|
+| CLI | `python run_report.py --planner` (invoked automatically when `my_config.yaml` is missing) or `--force-planner` (regenerate even if a config exists) |
+| Web API | `POST /api/planner/generate` with a JSON body containing the research request |
+
+### Runtime Hardening Summary
+
+Key reliability improvements across the agent and tool layers:
+
+- **Tool result normalisation** -- safe handling of `None` / empty results so downstream agents never receive unexpected types.
+- **Click result safety** -- `IndexError` fix when Playwright click actions return fewer results than expected.
+- **Search query deduplication** -- identical queries within the same collection run are suppressed.
+- **Result deduplication in memory** -- duplicates are detected by a composite fingerprint of name + source + content hash before insertion.
+- **Download URL detection** -- URLs ending in `.pdf`, `.xlsx`, `.csv`, or `.docx` are routed through `fetch` (requests) instead of Playwright to avoid browser timeouts on binary downloads.
+- **Resource cleanup** -- a shared browser session is reused across tool calls; pages and contexts are explicitly closed after each use.
+- **Chart code runtime validation** -- an AST-based pre-execution check rejects code that imports disallowed modules or calls dangerous builtins before it reaches `exec()`.
+- **`save_result` API keyword compatibility** -- the helper accepts both legacy and current keyword signatures so older tool implementations continue to work.
+
+### Language Control
+
+- Chart generation is language-aware: axis labels, titles, and legends are
+  rendered in the report's configured language (`en` / `zh`).
+- Font safety: the chart renderer falls back from `SimHei` to `DejaVu Sans`
+  when the CJK font is unavailable, preventing `matplotlib` `FontNotFound`
+  errors in CI or non-CJK environments.
+- Report language validation: the configured `language` value is checked at
+  startup and propagated to every agent prompt so mixed-language output is
+  avoided.
+
+### Run Completion Contract
+
+Every pipeline run produces a `run_manifest.json` in the output directory.
+The manifest records:
+
+- Per-stage status (`success` / `skipped` / `failed`).
+- Artifact existence checks (e.g. whether the final PDF was written).
+- Wall-clock duration per stage.
+
+Downstream tooling or CI jobs can inspect the manifest to decide whether a
+run completed successfully without parsing logs.
+
+### New Modules
+
+| File | Purpose |
+|------|---------|
+| `src/planner/` | YAML curation agent — schema, LLM planner, prompts |
+| `src/utils/chart_utils.py` | Safe font detection, chart filename sanitization |
+| `src/utils/language_utils.py` | Language resolution, display names, chart font/label helpers |
+| `src/utils/tool_result_utils.py` | Safe tool result wrapping (`None` → `[]`, non-list → `[item]`) |
+| `src/utils/report_validator.py` | Post-hoc report language and image-reference checks |
+| `src/utils/run_manifest.py` | Pipeline stage tracking and `run_manifest.json` writer |
+
+### Tests
+
+```bash
+# Unit tests (fast, no external services)
+.venv/bin/python -m pytest tests -m "not integration"
+
+# Integration tests (requires API keys and network)
+.venv/bin/python -m pytest tests -m integration
+```
 
 
 

@@ -451,14 +451,20 @@ class BaseAgent:
                 self.memory.add_log(target_tool.id, target_tool.type, kwargs, response, error=False, note=f"Tool {target_tool.name} executed successfully")
                 return response
             elif issubclass(type(target_tool), Tool):
-                response = bridge.run_async(target_tool.api_function(**kwargs))
-                sources = [item.source for item in response]
-                data_list = [item.data for item in response]
+                from src.utils.tool_result_utils import safe_tool_results
+                raw_response = bridge.run_async(target_tool.api_function(**kwargs))
+                response = safe_tool_results(raw_response)
+                if not response:
+                    self.logger.warning(f"Tool {tool_name} returned empty results")
+                    self.memory.add_log(target_tool.id, target_tool.type, kwargs, [], error=False, note=f"Tool {target_tool.name} returned empty results")
+                    return []
+                sources = [item.source for item in response if hasattr(item, 'source')]
+                data_list = [item.data for item in response if hasattr(item, 'data')]
                 sources = "\n".join(sources)
                 import sys
                 display_note = f"[Tool Result Overview] Gather {len(response)} Tool Results.\n"
                 for i, item in enumerate(response):
-                    display_note += f"-{i}. Name: {item.name}\nSource: {item.source}\n"
+                    display_note += f"-{i}. Name: {getattr(item, 'name', 'N/A')}\nSource: {getattr(item, 'source', 'N/A')}\n"
                 print(f"\n\n{display_note}\n\n", file=sys.stdout, flush=True)
 
                 self.memory.add_log(target_tool.id, target_tool.type, kwargs, response, error=False, note=f"Tool {target_tool.name} executed successfully")

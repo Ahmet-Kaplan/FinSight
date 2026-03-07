@@ -7,9 +7,16 @@ import matplotlib
 matplotlib.use('Agg')
 import os
 
-def draw_kline_chart(kline_data: pd.DataFrame, working_dir: str):
+def draw_kline_chart(kline_data: pd.DataFrame, working_dir: str, language: str = 'en'):
+    # Safe font loading with fallback
     font_path = "./fonts/kt_font.ttf"
-    font = font_manager.FontProperties(fname=font_path, size=16)
+    if os.path.exists(font_path):
+        font = font_manager.FontProperties(fname=font_path, size=16)
+    else:
+        from src.utils.chart_utils import detect_available_font
+        fallback = detect_available_font(['SimHei', 'KaiTi', 'PingFang SC', 'DejaVu Sans'])
+        font = font_manager.FontProperties(family=fallback or 'sans-serif', size=16)
+
     plt.rcParams['axes.unicode_minus'] = False
 
     sns.set_style("whitegrid", {
@@ -25,6 +32,22 @@ def draw_kline_chart(kline_data: pd.DataFrame, working_dir: str):
         "#6B8F71",  # muted green
     ]
     sns.set_palette(custom_palette)
+
+    # Language-aware labels
+    if language == 'zh':
+        title_text = '股价走势（近2年）'
+        ylabel_text = '价格'
+        xlabel_text = '日期'
+        high_label = '最高'
+        low_label = '最低'
+        close_label = '收盘价'
+    else:
+        title_text = 'Share Price Trend (Past 2 Years)'
+        ylabel_text = 'Price'
+        xlabel_text = 'Date'
+        high_label = 'High'
+        low_label = 'Low'
+        close_label = 'Close price'
 
     # Prepare data
     df = kline_data
@@ -44,19 +67,19 @@ def draw_kline_chart(kline_data: pd.DataFrame, working_dir: str):
         y='close',
         linewidth=2.5,
         color=custom_palette[0],
-        label='Close price',
+        label=close_label,
     )
 
     # Title and labels
     ax.set_title(
-        'Share Price Trend (Past 2 Years)',
+        title_text,
         fontsize=16,
         pad=20,
         font=font,
         fontweight='bold'
     )
-    ax.set_ylabel('Price', fontsize=12, labelpad=10, font=font)
-    ax.set_xlabel('Date', fontsize=12, labelpad=10, font=font)
+    ax.set_ylabel(ylabel_text, fontsize=12, labelpad=10, font=font)
+    ax.set_xlabel(xlabel_text, fontsize=12, labelpad=10, font=font)
 
     # Configure x-axis format
     ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
@@ -89,12 +112,12 @@ def draw_kline_chart(kline_data: pd.DataFrame, working_dir: str):
         color=[custom_palette[1], custom_palette[2]],
         s=100,
         zorder=5,
-        label=['High', 'Low'],
+        label=[high_label, low_label],
     )
 
     # Annotate extremes
     ax.annotate(
-        f'High: {df.loc[max_point, "close"]:.2f}',
+        f'{high_label}: {df.loc[max_point, "close"]:.2f}',
         xy=(max_point, df.loc[max_point, 'close']),
         xytext=(10, 10),
         textcoords='offset points',
@@ -104,7 +127,7 @@ def draw_kline_chart(kline_data: pd.DataFrame, working_dir: str):
     )
 
     ax.annotate(
-        f'Low: {df.loc[min_point, "close"]:.2f}',
+        f'{low_label}: {df.loc[min_point, "close"]:.2f}',
         xy=(min_point, df.loc[min_point, 'close']),
         xytext=(10, -30),
         textcoords='offset points',
@@ -116,4 +139,5 @@ def draw_kline_chart(kline_data: pd.DataFrame, working_dir: str):
     # Layout adjustments
     plt.tight_layout()
     plt.savefig(os.path.join(working_dir, 'kline_chart.png'))
+    plt.close('all')  # Prevent memory leaks
     return os.path.join(working_dir, 'kline_chart.png')

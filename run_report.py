@@ -20,6 +20,29 @@ IF_RESUME = True
 MAX_CONCURRENT = 3
 
 
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Run FinSight report generation pipeline")
+    parser.add_argument('--resume', action='store_true', default=True)
+    parser.add_argument('--no-resume', action='store_false', dest='resume')
+    parser.add_argument('--max-concurrent', type=int, default=3)
+    parser.add_argument('--planner', action='store_true', help='Run planner when config missing')
+    parser.add_argument('--force-planner', action='store_true', help='Force regenerate config')
+    return parser.parse_args()
+
+
+def maybe_run_planner(force=False, config_path='my_config.yaml'):
+    if os.path.exists(config_path) and not force:
+        return  # Config exists, skip planner
+    from src.planner import PlannerAgent
+    user_request = input("Enter your research topic: ").strip()
+    if not user_request:
+        print("No topic provided. Exiting.")
+        sys.exit(1)
+    planner = PlannerAgent()
+    planner.plan(user_request, yaml_path=config_path)
+    print(f"Config generated at {config_path}")
+
+
 async def run_report(resume: bool = True, max_concurrent: int = None):
     """
     Run report generation with optional concurrency limit.
@@ -256,11 +279,30 @@ async def run_report(resume: bool = True, max_concurrent: int = None):
         
         logger.info(f"Priority {priority} group finished\n")
     
+    # Build run manifest
+    from src.utils.run_manifest import RunManifest
+    manifest = RunManifest(output_dir=config.config.get('output_dir', './outputs'),
+                           target_name=config.config.get('target_name', ''))
+    # Check for produced artifacts
+    working_dir = config.working_dir
+    for ext in ('*.md', '*.docx', '*.pdf'):
+        import glob as _glob
+        for fpath in _glob.glob(os.path.join(working_dir, ext)):
+            artifact_type = 'report_md' if fpath.endswith('.md') else fpath.rsplit('.', 1)[-1]
+            manifest.add_artifact(fpath, artifact_type)
+    # Mark stages as completed (best-effort based on cache flags)
+    for stage in RunManifest.STAGES:
+        manifest.complete_stage(stage)
+    manifest.save()
+
     # Persist final state
     memory.save()
     logger.info("All tasks completed")
 
 
 if __name__ == '__main__':
-    asyncio.run(run_report(resume=IF_RESUME, max_concurrent=MAX_CONCURRENT))
+    args = parse_arguments()
+    if args.planner or args.force_planner:
+        maybe_run_planner(force=args.force_planner)
+    asyncio.run(run_report(resume=args.resume, max_concurrent=args.max_concurrent))
 

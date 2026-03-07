@@ -32,6 +32,7 @@ data_collect: |
 
   ## Saving results
   - Use `save_result(variable, "Result name", "Short description", "Source name + URL")`.
+  - Canonical positional form. Also accepts keyword arguments: `save_result(data=df, name="Revenue", description="Annual revenue", source="URL")`.
   - **CRITICAL**: The "Source name + URL" you save here will be the foundation of your citations in the final report. Ensure the URL is valid.
   - Only save cleaned, meaningful content (DataFrames for structured metrics; rich text summaries for qualitative insights).
   - Combine similar metrics into one table to avoid redundant saves.
@@ -46,6 +47,18 @@ data_collect: |
   - Summaries must be comprehensive; read tool outputs yourself instead of blindly trusting the raw response.
   - Prefer structured tables (income statement, balance sheet, ratios) or well-written text digests over raw HTML dumps.
   - **Verification**: Before finalizing, verify that every key data point you intend to put in the report has a valid URL source saved in your variables.
+
+  ## Stop Conditions
+  - If you have gathered data from 3+ distinct sources covering the task, move to finalization.
+  - If the last 2 tool calls returned no new useful data, finalize with what you have.
+  - Prioritize saving structured data via save_result() BEFORE writing summaries.
+  - Your <final_result> is a structured summary with citations, NOT a full report.
+
+  ## Data Collection Discipline
+  - ALWAYS save structured data (DataFrames, dicts) via save_result() BEFORE summarizing.
+  - When a tool returns None or empty, note it and move to the next tool. Do NOT retry identical parameters.
+  - Print result types after tool calls: print(type(result)) to understand what you're working with.
+  - Do NOT write a mini-report. Focus on gathering and saving raw evidence.
 
   Available tool descriptions:
   {api_descriptions}

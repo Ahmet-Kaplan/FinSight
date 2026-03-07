@@ -26,17 +26,14 @@ class HuShen_Index(Tool):
         except Exception as e:
             print("Failed to fetch CSI 300 data", e)
             data = None
-        if data is not None:
-            return [
-                ToolResult(
-                    name = f"{self.name}",
-                    description = self.description,
-                    data = data,
-                    source="Sina Finance: CSI 300 daily data. https://finance.sina.com.cn/realstock/company/sz000300/nc.shtml"
-                )
-            ]
-        else:
-            return []
+        return [
+            ToolResult(
+                name=f"{self.name}",
+                description=self.description,
+                data=data,
+                source="Sina Finance: CSI 300 daily data. https://finance.sina.com.cn/realstock/company/sz000300/nc.shtml"
+            )
+        ]
 
 
 class HengSheng_Index(Tool):
@@ -62,17 +59,14 @@ class HengSheng_Index(Tool):
         except Exception as e:
             print("Failed to fetch Hang Seng data", e)
             data = None
-        if data is not None:
-            return [
-                ToolResult(
-                    name = f"{self.name}",
-                    description = self.description,
-                    data = data,
-                    source="Sina Finance: Hang Seng Index daily data. https://stock.finance.sina.com.cn/hkstock/quotes/HSI.html."
-                )
-            ]
-        else:
-            return []
+        return [
+            ToolResult(
+                name=f"{self.name}",
+                description=self.description,
+                data=data,
+                source="Sina Finance: Hang Seng Index daily data. https://stock.finance.sina.com.cn/hkstock/quotes/HSI.html."
+            )
+        ]
         
 class ShangZheng_Index(Tool):
     def __init__(self):
@@ -97,17 +91,14 @@ class ShangZheng_Index(Tool):
         except Exception as e:
             print("Failed to fetch SSE Composite data", e)
             data = None
-        if data is not None:
-            return [
-                ToolResult(
-                    name = f"{self.name}",
-                    description = self.description,
-                    data = data,
-                    source="Sina Finance: SSE Composite daily data. https://finance.sina.com.cn/realstock/company/sz000001/nc.shtml"
-                )
-            ]
-        else:
-            return []
+        return [
+            ToolResult(
+                name=f"{self.name}",
+                description=self.description,
+                data=data,
+                source="Sina Finance: SSE Composite daily data. https://finance.sina.com.cn/realstock/company/sz000001/nc.shtml"
+            )
+        ]
 
 
 class NSDK_Index(Tool):
@@ -133,14 +124,11 @@ class NSDK_Index(Tool):
         except Exception as e:
             print("Failed to fetch Nasdaq data", e)
             data = None
-        if data is not None:
-            return [
-                ToolResult(
-                    name = f"{self.name}",
-                    description = self.description,
-                    data = data,
-                    source="Sina Finance: Nasdaq Composite daily data. https://stock.finance.sina.com.cn/usstock/quotes/.IXIC.html"
-                )
-            ]
-        else:
-            return []
+        return [
+            ToolResult(
+                name=f"{self.name}",
+                description=self.description,
+                data=data,
+                source="Sina Finance: Nasdaq Composite daily data. https://stock.finance.sina.com.cn/usstock/quotes/.IXIC.html"
+            )
+        ]

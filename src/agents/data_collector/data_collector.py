@@ -65,24 +65,30 @@ class DataCollector(BaseAgent):
         self.code_executor.set_variable("call_tool", self._agent_tool_function)
         self.code_executor.set_variable("save_result", self._save_result)
 
-    def _save_result(self, var: Any, result_name: str, result_description: str, data_source: str):
-        """Persist execution results into self.collected_data_list."""
-        self.memory.add_data(ToolResult(
+    def _save_result(self, *args, **kwargs):
+        """Persist execution results. Accepts both positional and keyword forms.
+
+        Canonical: save_result(var, result_name, result_description, data_source)
+        Also accepts: variable=, data=, name=, description=, source=
+        """
+        # Resolve positional args
+        var = args[0] if len(args) > 0 else kwargs.get('var', kwargs.get('variable', kwargs.get('data', kwargs.get('result', None))))
+        result_name = args[1] if len(args) > 1 else kwargs.get('result_name', kwargs.get('name', 'Unnamed result'))
+        result_description = args[2] if len(args) > 2 else kwargs.get('result_description', kwargs.get('description', ''))
+        data_source = args[3] if len(args) > 3 else kwargs.get('data_source', kwargs.get('source', ''))
+
+        if var is None:
+            self.logger.warning("save_result called with None data — skipping")
+            return
+
+        tool_result = ToolResult(
             name=result_name,
             description=result_description,
             data=var,
             source=data_source
-        ))
-        self.collected_data_list.append(ToolResult(
-            name=result_name,
-            description=result_description,
-            data=var,
-            source=data_source
-        ))
-        try:
-            self.logger.info(f"Saved collect result: {result_name} (source={data_source})")
-        except Exception:
-            pass
+        )
+        self.memory.add_data(tool_result)
+        self.collected_data_list.append(tool_result)
     
     async def _prepare_init_prompt(self, input_data: dict) -> list[dict]:
         task = input_data.get('task')

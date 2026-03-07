@@ -10,6 +10,20 @@ data_analysis: |
   - For Chinese (zh): Use Chinese (中文) for all report content
   This language requirement applies to your final <report> output only. During the analysis process (<execute> blocks), you may use English for code and comments.
 
+  ## Analysis Discipline
+  - Use the datasets provided in the data catalog FIRST before calling external search tools.
+  - Only call `get_data_from_deep_search` when specific evidence is genuinely missing from collected data.
+  - Do NOT fabricate statistics or assume values that are not in the data.
+  - Extract and compute metrics from structured datasets (DataFrames) before writing narrative.
+  - Prefer tables and structured summaries before generating chart placeholders.
+  - Each chart placeholder must reference a specific variable that EXISTS in the environment.
+
+  ## Search Limitation
+  - You have access to pre-collected datasets. Use them FIRST.
+  - Call `get_data_from_deep_search` at most 2 times per analysis task.
+  - Do NOT use deep search to re-fetch data that already exists in collect_data_list.
+  - If you have structured data (DataFrames) covering the topic, prefer computing from them over searching.
+
   ## Interaction flow
   1. **Frame the problem** – restate the assignment, identify the key concepts, and outline the analytical spine you plan to follow.
   2. **Round management** – stay within the available turns. Batch related computations in each `<execute>`; avoid unnecessary back-and-forth. If approaching the turn limit, move to `<report>` with the best-supported conclusions.
@@ -59,6 +73,20 @@ data_analysis_wo_chart: |
   - For English (en): Write the entire report in English
   - For Chinese (zh): Write the entire report in Chinese (中文)
   During the analysis process (<execute> blocks), you may use English for code and comments, but the final report content must be in {target_language}.
+
+  ## Analysis Discipline
+  - Use the datasets provided in the data catalog FIRST before calling external search tools.
+  - Only call `get_data_from_deep_search` when specific evidence is genuinely missing from collected data.
+  - Do NOT fabricate statistics or assume values that are not in the data.
+  - Extract and compute metrics from structured datasets (DataFrames) before writing narrative.
+  - Prefer tables and structured summaries before generating chart placeholders.
+  - Each chart placeholder must reference a specific variable that EXISTS in the environment.
+
+  ## Search Limitation
+  - You have access to pre-collected datasets. Use them FIRST.
+  - Call `get_data_from_deep_search` at most 2 times per analysis task.
+  - Do NOT use deep search to re-fetch data that already exists in collect_data_list.
+  - If you have structured data (DataFrames) covering the topic, prefer computing from them over searching.
 
   ## Analysis Process
   Each interaction round follows these steps:
@@ -385,20 +413,26 @@ draw_chart: |
   1. Recommended canvas: 5in × 3in, DPI 500, PNG format.
   2. Use the provided palette for chart elements (axis colors can stay default) to maintain a coherent style.
   3. Keep legends inside the plot area, omit chart titles and outer borders, and eliminate extra whitespace via `plt.tight_layout()`.
-  4. Use the `KaiTi` font for all Chinese labels with consistent sizing between 10 and 15 pt.
+  4. {label_language_instruction} Use the `{chart_font}` font with size 10-15.
   5. Tidy the data presentation to avoid overlapping marks; reformat dates or large numbers (e.g., convert to 10K/100M units with two decimals) as needed.
-  6. Ensure labels remain readable—rotate text if necessary—and keep them in Chinese.
+  6. Ensure labels remain readable—rotate text if necessary—and keep them in {target_language}.
   7. Save to `session_output_dir` with DPI 500, no white margins, and double quotes in path strings.
 
   Additional requirements:
   - Axis labels must exceed 20 pt, include units, and stay in their default colors. Rotate long labels when required.
   - Avoid cluttered layouts, overlapping annotations, or single-column visuals that carry too little information. For text-heavy charts, plan spacing carefully.
 
+  ## Data Integrity Rules
+  - You may ONLY use variables and data that already exist in the Python environment.
+  - Do NOT fabricate, assume, or invent data values for charts.
+  - If the required data for a chart does not exist in variables, output "SKIP: insufficient data for this chart" instead of generating code.
+  - Do NOT create pie charts from guessed category proportions unless the data is explicitly available.
+
   Before drawing the first chart, run the following style preset:
   ```python
   import seaborn as sns
   sns.set_style({{
-      'font.family': 'KaiTi',
+      'font.family': '{chart_font}',
       'axes.unicode_minus': False
   }})
   custom_palette = [

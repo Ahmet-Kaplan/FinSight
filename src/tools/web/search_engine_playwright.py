@@ -93,9 +93,20 @@ class PlaywrightSearch(Tool):
                         })
                         
             except Exception as e:
-                print(f"An error occurred during the search: {e}")
+                if "Download is starting" in str(e):
+                    print(f"Skipping download URL during search: {e}")
+                else:
+                    print(f"An error occurred during the search: {e}")
             finally:
                 print("Closing browser...")
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+                try:
+                    await context.close()
+                except Exception:
+                    pass
                 await browser.close()
                 
         return [

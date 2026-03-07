@@ -421,7 +421,7 @@ class ReportGenerator(BaseAgent):
                             kline_data.rename(columns={'\u65e5\u671f': 'date'}, inplace=True)
                         if '\u6536\u76d8' in kline_data.columns:
                             kline_data.rename(columns={'\u6536\u76d8': 'close'}, inplace=True)
-                    fig_path = draw_kline_chart(kline_data, self.working_dir)
+                    fig_path = draw_kline_chart(kline_data, self.working_dir, language=self.config.config.get('language', 'en'))
                     output_str += f'\n\n### Share Price Trend\n\n'
                     output_str += f'![Trailing price performance]({fig_path})\n\n'
         except Exception as e:
@@ -597,6 +597,13 @@ class ReportGenerator(BaseAgent):
             current_state['post_stage'] = self._post_stage
             await self.save(state=current_state, checkpoint_name='report_latest.pkl')
             self.logger.info("[Phase2] Step 3 done, checkpoint saved")
+
+        # Validate report before final rendering
+        from src.utils.report_validator import validate_report
+        report_content = report.content
+        warnings = validate_report(report_content, self.config.config.get('language', 'en'), self.working_dir)
+        for w in warnings:
+            self.logger.warning(f"Report validation: {w}")
 
         # 4 Render to docx
         if self._post_stage <= 4:

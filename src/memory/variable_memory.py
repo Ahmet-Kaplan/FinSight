@@ -289,7 +289,28 @@ class Memory:
             return False
         
         
+    @staticmethod
+    def _content_fingerprint(data) -> str:
+        """Lightweight content hash for dedup. Uses first 500 chars of str repr."""
+        import hashlib
+        preview = str(data)[:500]
+        return hashlib.md5(preview.encode('utf-8', errors='replace')).hexdigest()
+
     def add_data(self, data: Any):
+        from src.tools.base import ToolResult
+        if isinstance(data, ToolResult):
+            new_fp = self._content_fingerprint(data.data)
+            for existing in self.data:
+                if not isinstance(existing, ToolResult):
+                    continue
+                # Same name + same source → duplicate
+                if (existing.name == data.name and
+                    existing.source == data.source):
+                    return False
+                # Same name + same content → duplicate
+                if (existing.name == data.name and
+                    self._content_fingerprint(existing.data) == new_fp):
+                    return False
         self.data.append(data)
         return True
 

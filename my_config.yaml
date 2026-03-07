@@ -1,29 +1,36 @@
-target_name: "商汤科技"
-stock_code: "00020.hk"
-target_type: 'financial_company'  # financial_company, macro, industry, general
-output_dir: "./outputs/exp-v3"
-language: 'zh' # zh,en
-reference_doc_path: 'src/template/report_template.docx' # used for docx style
-outline_template_path: 'src/template/company_outline_zh.md' # used for outline style
+target_name: "ASML Holding N.V."
+stock_code: "ASML"
+target_type: "financial_company" # or macro, industry, general
+output_dir: "./outputs/asml-company"
+language: "en"
+reference_doc_path: "src/template/report_template.docx"
+outline_template_path: "src/template/company_outline_en.md"
 
 custom_collect_tasks:
-  - "资产负债表, 利润表, 现金流量表三大财务报表"
-  - "股票基本信息以及股价数据"
-  - "股东结构"
-  - "投资评级"
-  - "公司市销率, 净资产收益率(ROE), 市盈率, 市净率"
-  - "公司主要竞争对手情况"
-  - "指数数据: 沪深300指数日数据, 恒生指数日数据, 上证指数日数据, 纳斯达克指数日数据"
+  - "Historical balance sheet, income statement, and cash flow statement for the last 5-10 fiscal years"
+  - "Basic stock information, market capitalisation, share price history, trading volume, and valuation multiples"
+  - "Shareholder structure, institutional ownership, and major insider holdings"
+  - "Analyst ratings, target prices, and consensus estimates"
+  - "Key valuation metrics including P/E, EV/EBITDA, P/S, P/B, ROE, ROIC, gross margin, operating margin, and free cash flow margin"
+  - "Revenue breakdown by business segment, geography, installed base management, and service-related revenue"
+  - "Key customer concentration and major end-market exposure including logic and memory"
+  - "Competitor landscape including Nikon, Canon, Applied Materials, Lam Research, KLA, and other semiconductor equipment companies"
+  - "Relevant industry and benchmark index data including Nasdaq, SOX index, Euro Stoxx, S&P 500, and major semiconductor capital expenditure trends"
+  - "Recent company filings, annual reports, investor presentations, earnings call transcripts, and capital allocation disclosures"
+
 custom_analysis_tasks:
-  - "梳理公司发展历程、关键里程碑事件及当前核心主营业务范围"
-  - "分析创始团队及高管背景，梳理股权结构及主要股东情况"
-  - "梳理公司上市前的融资轮次、金额及主要投资方"
-  - "分析历年营收趋势、各业务板块占比变化及增长驱动因素"
-  - "评估公司盈利能力（ROE、毛利率、净利率）及运营效率（各项周转率)"
-  - "分析公司偿债能力（资产负债率、流动比率）及现金流结构与健康度"
-  - "进行同行业竞争对手对比分析，评估行业地位及核心竞争力（技术/品牌/渠道）"
-  - "复盘近5年股价走势与成交量，分析关键事件（政策/财报/技术）对股价的影响"
-  - "整理历史三大财务报表，预测未来两年核心财务数据，并进行估值分析"
+  - "Summarise ASML's development history, major milestones, and current core business model, with emphasis on lithography leadership and EUV/High-NA technology"
+  - "Analyse management background, governance structure, and capital allocation philosophy"
+  - "Examine ownership structure, major shareholders, and any meaningful changes in institutional positioning"
+  - "Analyse historical revenue growth, order backlog, gross margin, operating leverage, and segment mix over the last 5-10 years"
+  - "Evaluate profitability using ROE, ROIC, gross margin, operating margin, net margin, and free cash flow conversion"
+  - "Assess balance sheet quality, liquidity, debt profile, working capital efficiency, and cash flow resilience"
+  - "Analyse ASML's competitive moat, including technological leadership, ecosystem lock-in, switching costs, customer dependence, supply chain constraints, and regulatory/export-control risks"
+  - "Compare ASML against key semiconductor equipment peers on valuation, profitability, growth, R&D intensity, and strategic positioning"
+  - "Review the stock's performance over the last 5 years and explain the impact of major events such as semiconductor cycles, export controls, AI demand, customer capex shifts, and earnings revisions"
+  - "Develop a forward-looking view for the next 2 years on revenue, margins, EPS, free cash flow, and valuation under base, bull, and bear scenarios"
+  - "Identify the most important investment risks and catalysts, including cyclicality, customer concentration, China exposure, geopolitical risk, and technology execution"
+  - "Conclude with an investment thesis that clearly states whether ASML appears undervalued, fairly valued, or overvalued relative to fundamentals and peers"
 
 use_collect_data_cache: True
 use_analysis_cache: True
@@ -31,14 +38,13 @@ use_report_outline_cache: True
 use_full_report_cache: True
 use_post_process_cache: True
 
-# load in environment variables
 llm_config_list:
   - model_name: "${DS_MODEL_NAME}"
     api_key: "${DS_API_KEY}"
     base_url: "${DS_BASE_URL}"
     generation_params:
       temperature: 0.7
-      max_tokens: 32768
+      max_tokens: 8192
       top_p: 0.95
   - model_name: "${EMBEDDING_MODEL_NAME}"
     api_key: "${EMBEDDING_API_KEY}"
