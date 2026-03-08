@@ -1,0 +1,35 @@
+profile_name: company
+target_type: company
+language: en
+reference_doc_path: src/template/report_template.docx
+outline_template_path: src/template/company_outline.md
+
+custom_collect_tasks:
+  - Historical income statement, balance sheet, and cash flow statement for the last 5 to 10 fiscal years
+  - Stock price, volume, market capitalization, and valuation multiple history
+  - Revenue and margin breakdown by segment, geography, and product line
+  - Capital allocation records including dividends, repurchases, and major acquisitions
+  - Ownership structure including institutional holders, insider ownership, and float changes
+  - Recent filings, annual reports, investor presentations, and earnings transcripts
+  - Peer set data for direct competitors and relevant benchmark indices
+  - Consensus forecasts for revenue, EBITDA, EPS, and free cash flow
+  - Key operational KPIs disclosed by management and industry sources
+  - Material legal, regulatory, and governance disclosures from the last 3 years
+
+custom_analysis_tasks:
+  - Summarize the company's business model, value proposition, and strategic positioning
+  - Assess management quality, governance structure, and capital allocation discipline
+  - Analyze growth trajectory by segment and identify durable growth drivers
+  - Evaluate profitability quality through gross margin, operating leverage, and cash conversion
+  - Assess balance-sheet resilience, liquidity, and debt maturity risk
+  - Compare valuation versus peers under normalized earnings assumptions
+  - Map competitive moat sources, switching costs, and execution risks
+  - Build base, bull, and bear 3-year scenarios for revenue, margin, and valuation
+  - Identify near-term catalysts and disconfirming indicators for the thesis
+  - Conclude with an investor-ready risk-reward view and monitoring framework
+
+use_collect_data_cache: true
+use_analysis_cache: true
+use_report_outline_cache: true
+use_full_report_cache: true
+use_post_process_cache: true

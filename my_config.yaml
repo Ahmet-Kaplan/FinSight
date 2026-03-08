@@ -1,54 +1,82 @@
-target_name: "ASML Holding N.V."
-stock_code: "ASML"
-target_type: "financial_company" # or macro, industry, general
-output_dir: "./outputs/asml-company"
-language: "en"
-reference_doc_path: "src/template/report_template.docx"
-outline_template_path: "src/template/company_outline_en.md"
-
+target_name: Global Semiconductor Industry
+stock_code: ''
+target_type: industry
+target_profiles:
+- industry
+- macro
+market: ''
+output_dir: ./outputs/global-semiconductor-industry
+language: en
+reference_doc_path: src/template/report_template.docx
 custom_collect_tasks:
-  - "Historical balance sheet, income statement, and cash flow statement for the last 5-10 fiscal years"
-  - "Basic stock information, market capitalisation, share price history, trading volume, and valuation multiples"
-  - "Shareholder structure, institutional ownership, and major insider holdings"
-  - "Analyst ratings, target prices, and consensus estimates"
-  - "Key valuation metrics including P/E, EV/EBITDA, P/S, P/B, ROE, ROIC, gross margin, operating margin, and free cash flow margin"
-  - "Revenue breakdown by business segment, geography, installed base management, and service-related revenue"
-  - "Key customer concentration and major end-market exposure including logic and memory"
-  - "Competitor landscape including Nikon, Canon, Applied Materials, Lam Research, KLA, and other semiconductor equipment companies"
-  - "Relevant industry and benchmark index data including Nasdaq, SOX index, Euro Stoxx, S&P 500, and major semiconductor capital expenditure trends"
-  - "Recent company filings, annual reports, investor presentations, earnings call transcripts, and capital allocation disclosures"
-
+- Global semiconductor market size, revenue, and shipment data for the last 5-10 years
+  with 3-year forward forecasts
+- Supply chain data including wafer fabrication, assembly, testing, and packaging
+  capacity by region and company
+- 'Demand layer breakdown by end-market: datacenter, smartphone, PC, automotive, industrial,
+  consumer electronics'
+- Company structure and market share data for key players across the semiconductor
+  value chain
+- Macroeconomic indicators (GDP growth, interest rates, inflation) and their historical
+  correlation with semiconductor cycles
+- Financial statements, analyst estimates, and valuation metrics for ASML Holding
+  NV and Taiwan Semiconductor Manufacturing Company (TSMC)
+- Management commentary, strategic direction, and capital allocation plans from ASML
+  and TSMC earnings calls and presentations
+- Technology roadmap data for advanced nodes (3nm, 2nm, 1.4nm) and EUV/High-NA lithography
+  adoption timelines
+- Geopolitical and trade policy data affecting semiconductor supply chains (export
+  controls, CHIPS Act, subsidies)
+- Inventory levels and utilization rates across the semiconductor supply chain
+- Raw material and equipment cost trends for semiconductor manufacturing
+- Competitive landscape analysis including Intel, Samsung, and other foundry/logic/memory
+  players
 custom_analysis_tasks:
-  - "Summarise ASML's development history, major milestones, and current core business model, with emphasis on lithography leadership and EUV/High-NA technology"
-  - "Analyse management background, governance structure, and capital allocation philosophy"
-  - "Examine ownership structure, major shareholders, and any meaningful changes in institutional positioning"
-  - "Analyse historical revenue growth, order backlog, gross margin, operating leverage, and segment mix over the last 5-10 years"
-  - "Evaluate profitability using ROE, ROIC, gross margin, operating margin, net margin, and free cash flow conversion"
-  - "Assess balance sheet quality, liquidity, debt profile, working capital efficiency, and cash flow resilience"
-  - "Analyse ASML's competitive moat, including technological leadership, ecosystem lock-in, switching costs, customer dependence, supply chain constraints, and regulatory/export-control risks"
-  - "Compare ASML against key semiconductor equipment peers on valuation, profitability, growth, R&D intensity, and strategic positioning"
-  - "Review the stock's performance over the last 5 years and explain the impact of major events such as semiconductor cycles, export controls, AI demand, customer capex shifts, and earnings revisions"
-  - "Develop a forward-looking view for the next 2 years on revenue, margins, EPS, free cash flow, and valuation under base, bull, and bear scenarios"
-  - "Identify the most important investment risks and catalysts, including cyclicality, customer concentration, China exposure, geopolitical risk, and technology execution"
-  - "Conclude with an investment thesis that clearly states whether ASML appears undervalued, fairly valued, or overvalued relative to fundamentals and peers"
-
-use_collect_data_cache: True
-use_analysis_cache: True
-use_report_outline_cache: True
-use_full_report_cache: True
-use_post_process_cache: True
-
+- Analyze the structural growth drivers versus cyclical components in the semiconductor
+  industry over the next 3 years
+- Evaluate supply-demand balance across the semiconductor value chain and identify
+  potential bottlenecks or oversupply risks
+- Assess how global macroeconomic outlook (growth, rates, geopolitics) will impact
+  semiconductor demand and pricing
+- Compare company structures and business models across the semiconductor ecosystem
+  (fabless, IDM, foundry, equipment)
+- Analyze ASML's competitive positioning, technology leadership in lithography, and
+  management execution capabilities
+- Evaluate TSMC's foundry dominance, advanced node roadmap execution, and management's
+  capital allocation strategy
+- Develop integrated 3-year scenarios (base, bull, bear) combining macro forecasts
+  with industry supply-demand dynamics
+- Project how ASML and TSMC might perform relative to industry averages based on their
+  strategic directions
+- Compare personal evaluation of market/industry outlook with consensus analyst views
+  and management guidance
+- Assess valuation sensitivity of semiconductor companies to changes in macro conditions
+  and industry cycles
+- Identify key investment risks and catalysts specific to semiconductor companies
+  over the 3-year horizon
+- Provide conclusions on whether ASML and TSMC are positioned to outperform or underperform
+  the broader semiconductor market
+rate_limits:
+  search_engines: 1.0
+  financial_apis: 0.5
+  fred_api: 0.5
+  yfinance: 0.2
 llm_config_list:
-  - model_name: "${DS_MODEL_NAME}"
-    api_key: "${DS_API_KEY}"
-    base_url: "${DS_BASE_URL}"
-    generation_params:
-      temperature: 0.7
-      max_tokens: 8192
-      top_p: 0.95
-  - model_name: "${EMBEDDING_MODEL_NAME}"
-    api_key: "${EMBEDDING_API_KEY}"
-    base_url: "${EMBEDDING_BASE_URL}"
-  - model_name: "${VLM_MODEL_NAME}"
-    api_key: "${VLM_API_KEY}"
-    base_url: "${VLM_BASE_URL}"
+- model_name: ${DS_MODEL_NAME}
+  api_key: ${DS_API_KEY}
+  base_url: ${DS_BASE_URL}
+  generation_params:
+    temperature: 0.7
+    max_tokens: 8192
+    top_p: 0.95
+- model_name: ${EMBEDDING_MODEL_NAME}
+  api_key: ${EMBEDDING_API_KEY}
+  base_url: ${EMBEDDING_BASE_URL}
+- model_name: ${VLM_MODEL_NAME}
+  api_key: ${VLM_API_KEY}
+  base_url: ${VLM_BASE_URL}
+use_collect_data_cache: true
+use_analysis_cache: true
+use_report_outline_cache: true
+use_full_report_cache: true
+use_post_process_cache: true

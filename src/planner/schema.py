@@ -1,6 +1,16 @@
 from pydantic import BaseModel, Field
-from typing import Literal, List, Optional
+from typing import Literal, List
 
+ProfileType = Literal[
+    "company",
+    "financial_company",
+    "macro",
+    "industry",
+    "financial_industry",
+    "general",
+    "financial_macro",
+    "governance",
+]
 
 class PlannerConfig(BaseModel):
     """Validated configuration produced by the planner LLM call.
@@ -11,14 +21,8 @@ class PlannerConfig(BaseModel):
 
     target_name: str
     stock_code: str = ""
-    target_type: Literal[
-        "company",
-        "financial_company",
-        "macro",
-        "industry",
-        "financial_industry",
-        "general",
-    ] = "company"
+    target_type: ProfileType = "company"
+    target_profiles: List[ProfileType] = Field(default_factory=list)
     market: Literal["A", "HK", "US", ""] = ""
     language: Literal["en", "zh"] = "en"
     output_dir: str = ""

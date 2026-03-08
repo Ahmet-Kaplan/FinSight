@@ -1,0 +1,35 @@
+profile_name: governance
+target_type: governance
+language: en
+reference_doc_path: src/template/report_template.docx
+outline_template_path: src/template/company_outline.md
+
+custom_collect_tasks:
+  - Policy texts, legal frameworks, and enforcement records for the domain
+  - Institutional governance models across major jurisdictions
+  - Compliance standards, audit requirements, and certification practices
+  - Incident databases and enforcement case outcomes
+  - Stakeholder positions from regulators, firms, and civil society groups
+  - Implementation data from organizations adopting governance controls
+  - Metrics on transparency, accountability, and redress mechanisms
+  - Budget, staffing, and capability data for oversight institutions
+  - International coordination initiatives and standard-setting outputs
+  - Recent legislative proposals and consultation feedback documents
+
+custom_analysis_tasks:
+  - Compare governance frameworks by scope, enforceability, and implementation burden
+  - Assess institutional capacity and practical feasibility of implementation
+  - Analyze compliance incentives and potential regulatory arbitrage
+  - Evaluate effectiveness of existing accountability mechanisms
+  - Assess innovation-versus-safety trade-offs under different policy designs
+  - Map stakeholder alignment and conflict points
+  - Build scenario analysis for policy tightening, continuity, and fragmentation
+  - Identify measurable indicators of governance effectiveness
+  - Recommend pragmatic control architecture and rollout sequencing
+  - Conclude with governance strategy, risks, and monitoring priorities
+
+use_collect_data_cache: true
+use_analysis_cache: true
+use_report_outline_cache: true
+use_full_report_cache: true
+use_post_process_cache: true

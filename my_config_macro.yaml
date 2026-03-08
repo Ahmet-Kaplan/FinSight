@@ -1,0 +1,35 @@
+profile_name: macro
+target_type: macro
+language: en
+reference_doc_path: src/template/report_template.docx
+outline_template_path: src/template/company_outline.md
+
+custom_collect_tasks:
+  - GDP growth, inflation, and labor market series for major economies over 10 years
+  - Policy rates, yield curves, and central bank balance-sheet trends
+  - Household consumption, savings rates, and real income indicators
+  - Business investment, industrial production, and PMI trend data
+  - Credit growth, lending standards, and financial conditions indices
+  - Trade volumes, commodity prices, and shipping-cost indicators
+  - Fiscal stance including deficits, debt trajectories, and policy packages
+  - Foreign exchange trends and cross-border capital flow metrics
+  - Leading and coincident indicators from official statistical agencies
+  - Consensus macro forecasts from multilateral and sell-side sources
+
+custom_analysis_tasks:
+  - Diagnose the cycle phase using growth, inflation, and labor indicators
+  - Evaluate the policy mix and likely central-bank reaction function
+  - Assess recession versus reacceleration probabilities over the next 12 to 36 months
+  - Analyze credit and liquidity conditions as transmission channels
+  - Assess trade and commodity dynamics as inflation and growth drivers
+  - Compare regional divergences in macro momentum and policy constraints
+  - Develop base, bull, and bear macro scenarios with explicit assumptions
+  - Translate scenarios into implications for rates, FX, equities, and credit
+  - Identify key data releases and policy events as catalysts
+  - Conclude with actionable macro positioning and risk controls
+
+use_collect_data_cache: true
+use_analysis_cache: true
+use_report_outline_cache: true
+use_full_report_cache: true
+use_post_process_cache: true

@@ -30,9 +30,11 @@ class AsyncCodeExecutor:
     """
     Lightweight Python sandbox capable of executing LLM-generated code.
     """
-    def __init__(self, working_dir: str, exec_timeout: float = DEFAULT_EXEC_TIMEOUT):
+    def __init__(self, working_dir: str, exec_timeout: float = DEFAULT_EXEC_TIMEOUT,
+                 language: str = 'en'):
         self.working_dir = working_dir
         self.exec_timeout = exec_timeout
+        self.language = language
         os.makedirs(self.working_dir, exist_ok=True)
         self.session_id = str(uuid.uuid4())
         self.globals: Dict[str, Any] = self.create_clean_globals()
@@ -51,6 +53,7 @@ class AsyncCodeExecutor:
         safe_builtins = dict(vars(_builtins_mod))
 
         _original_import = _builtins_mod.__import__
+        _safe_os_holder: Dict[str, Any] = {"os": None}
 
         def _restricted_import(name, *args, **kwargs):
             top_level = name.split(".")[0]
@@ -61,6 +64,8 @@ class AsyncCodeExecutor:
                 raise ImportError(
                     f"Importing '{name}' is not allowed in the code sandbox."
                 )
+            if top_level == "os" and _safe_os_holder.get("os") is not None:
+                return _safe_os_holder["os"]
             return _original_import(name, *args, **kwargs)
 
         safe_builtins["__import__"] = _restricted_import
@@ -69,22 +74,107 @@ class AsyncCodeExecutor:
         import os as _os_mod
         _original_open = _builtins_mod.open
         _allowed_dir = _os_mod.path.abspath(self.working_dir)
+        _agent_dir = _os_mod.path.abspath(_os_mod.path.join(_allowed_dir, _os_mod.pardir))
+        _run_working_dir = _os_mod.path.abspath(_os_mod.path.join(_agent_dir, _os_mod.pardir, _os_mod.pardir))
+        _state_dir = _os_mod.path.join(_run_working_dir, "state")
+        _memory_dir = _os_mod.path.join(_run_working_dir, "memory")
+        _agent_working_dir = _os_mod.path.join(_run_working_dir, "agent_working")
+        _allowed_roots = [_allowed_dir, _state_dir, _memory_dir, _agent_working_dir]
+        _allowed_root_artifact_exts = {".md", ".docx", ".pdf", ".png"}
+
+        def _is_under(path: str, root: str) -> bool:
+            try:
+                path_abs = _os_mod.path.abspath(path)
+                root_abs = _os_mod.path.abspath(root)
+                return path_abs == root_abs or path_abs.startswith(root_abs + _os_mod.sep)
+            except Exception:
+                return False
+
+        def _is_allowed_mutation_path(path: str, *, directory: bool = False) -> bool:
+            abs_path = _os_mod.path.abspath(str(path))
+            # Always allow mutations inside scoped roots.
+            for root in _allowed_roots:
+                if _is_under(abs_path, root):
+                    return True
+            # Allow report artifact writes only at run working dir root.
+            if not directory and _os_mod.path.dirname(abs_path) == _run_working_dir:
+                ext = _os_mod.path.splitext(abs_path)[1].lower()
+                if ext in _allowed_root_artifact_exts:
+                    return True
+            return False
+
+        def _assert_allowed(path: str, *, op_name: str, directory: bool = False) -> str:
+            abs_path = _os_mod.path.abspath(str(path))
+            if not _is_allowed_mutation_path(abs_path, directory=directory):
+                _sandbox_logger.warning(
+                    "Blocked os mutation '%s' on '%s' (outside sandbox roots).",
+                    op_name,
+                    path,
+                )
+                raise PermissionError(
+                    f"Operation '{op_name}' is not allowed on '{path}'. "
+                    f"Sandbox writes are restricted to {_allowed_roots} and "
+                    f"top-level report artifacts under {_run_working_dir}."
+                )
+            return abs_path
 
         def _restricted_open(file, mode="r", *args, **kwargs):
             if any(m in mode for m in ("w", "a", "x", "+")):
-                abs_path = _os_mod.path.abspath(str(file))
-                if not abs_path.startswith(_allowed_dir):
-                    _sandbox_logger.warning(
-                        "Blocked file write to '%s' (outside sandbox dir '%s')",
-                        file, _allowed_dir,
-                    )
-                    raise PermissionError(
-                        f"Writing to '{file}' is not allowed. "
-                        f"Sandbox writes are restricted to {_allowed_dir}"
-                    )
+                _assert_allowed(str(file), op_name="open", directory=False)
             return _original_open(file, mode, *args, **kwargs)
 
         safe_builtins["open"] = _restricted_open
+
+        class _SafeOSProxy:
+            path = _os_mod.path
+            sep = _os_mod.sep
+            altsep = _os_mod.altsep
+            linesep = _os_mod.linesep
+            environ = _os_mod.environ
+
+            def __getattr__(self, name: str):
+                return getattr(_os_mod, name)
+
+        safe_os = _SafeOSProxy()
+
+        def _safe_remove(path, *args, **kwargs):
+            _assert_allowed(path, op_name="remove")
+            return _os_mod.remove(path, *args, **kwargs)
+
+        def _safe_unlink(path, *args, **kwargs):
+            _assert_allowed(path, op_name="unlink")
+            return _os_mod.unlink(path, *args, **kwargs)
+
+        def _safe_rename(src, dst, *args, **kwargs):
+            _assert_allowed(src, op_name="rename-src")
+            _assert_allowed(dst, op_name="rename-dst")
+            return _os_mod.rename(src, dst, *args, **kwargs)
+
+        def _safe_replace(src, dst, *args, **kwargs):
+            _assert_allowed(src, op_name="replace-src")
+            _assert_allowed(dst, op_name="replace-dst")
+            return _os_mod.replace(src, dst, *args, **kwargs)
+
+        def _safe_rmdir(path, *args, **kwargs):
+            _assert_allowed(path, op_name="rmdir", directory=True)
+            return _os_mod.rmdir(path, *args, **kwargs)
+
+        def _safe_mkdir(path, *args, **kwargs):
+            _assert_allowed(path, op_name="mkdir", directory=True)
+            return _os_mod.mkdir(path, *args, **kwargs)
+
+        def _safe_makedirs(name, mode=0o777, exist_ok=False):
+            _assert_allowed(name, op_name="makedirs", directory=True)
+            return _os_mod.makedirs(name, mode=mode, exist_ok=exist_ok)
+
+        safe_os.remove = _safe_remove
+        safe_os.unlink = _safe_unlink
+        safe_os.rename = _safe_rename
+        safe_os.replace = _safe_replace
+        safe_os.rmdir = _safe_rmdir
+        safe_os.mkdir = _safe_mkdir
+        safe_os.makedirs = _safe_makedirs
+        _safe_os_holder["os"] = safe_os
 
         context = {'__builtins__': safe_builtins}
 
@@ -99,7 +189,7 @@ class AsyncCodeExecutor:
         import sys
         
         context.update({
-            'os': os,
+            'os': safe_os,
             'json': json,
             'math': math,
             're': re,
@@ -116,12 +206,17 @@ class AsyncCodeExecutor:
             import matplotlib.pyplot as plt
             import matplotlib
             import matplotlib.font_manager as fm
-            # Use safe font detection — avoids hardcoding SimHei which crashes on non-CJK systems
+            # Language-aware font selection:
+            # English runs use DejaVu Sans only (no CJK font probing).
+            # Chinese runs probe for an available CJK font, with DejaVu fallback.
             from src.utils.chart_utils import detect_available_font
-            _safe_font = detect_available_font([
-                'SimHei', 'KaiTi', 'Noto Sans CJK SC', 'PingFang SC',
-                'Arial Unicode MS', 'DejaVu Sans',
-            ]) or 'sans-serif'
+            if self.language == 'zh':
+                _safe_font = detect_available_font([
+                    'SimHei', 'KaiTi', 'Noto Sans CJK SC', 'PingFang SC',
+                    'Arial Unicode MS', 'DejaVu Sans',
+                ]) or 'sans-serif'
+            else:
+                _safe_font = 'DejaVu Sans'
             matplotlib.rcParams['font.sans-serif'] = [_safe_font, 'sans-serif']
             matplotlib.rcParams['axes.unicode_minus'] = False
             context.update({
@@ -390,4 +485,3 @@ class AsyncCodeExecutor:
             'stderr': stderr,
             'error': has_error
         }
-

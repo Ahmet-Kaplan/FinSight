@@ -1,7 +1,8 @@
 """
 Chart Utility Helpers
 
-Font detection, safe chart styling, and filename sanitization for FinSight charts.
+Font detection, safe chart styling, CJK detection, and filename sanitization
+for FinSight charts.
 """
 
 import re
@@ -54,21 +55,52 @@ def get_safe_chart_style(lang_code: str) -> dict:
     return {'font.family': font, 'axes.unicode_minus': False}
 
 
-def sanitize_chart_filename(name: str, max_length: int = 60) -> str:
-    """Make a filename safe for all operating systems.
+# ---------------------------------------------------------------------------
+# CJK detection
+# ---------------------------------------------------------------------------
 
-    Strips non-ASCII characters, replaces whitespace with underscores, and
-    truncates to *max_length*.
+_CJK_RANGES = re.compile(
+    '['
+    '\u4e00-\u9fff'       # CJK Unified Ideographs
+    '\u3400-\u4dbf'       # CJK Extension A
+    '\uf900-\ufaff'       # CJK Compatibility Ideographs
+    '\U00020000-\U0002a6df'  # CJK Extension B
+    ']'
+)
+
+
+def contains_cjk(text: str) -> bool:
+    """Return True if *text* contains any CJK ideograph character."""
+    return bool(_CJK_RANGES.search(text))
+
+
+# ---------------------------------------------------------------------------
+# Filename sanitization
+# ---------------------------------------------------------------------------
+
+def sanitize_chart_filename(
+    name: str,
+    max_length: int = 60,
+    ascii_only: bool = False,
+) -> str:
+    """Make a filename safe for all operating systems.
 
     Args:
         name: Raw filename (may contain CJK, special chars, etc.).
         max_length: Maximum character length for the returned name.
+        ascii_only: When True, strip everything outside ``[a-zA-Z0-9_\\-.]``
+            (recommended for English-language reports to avoid tofu glyphs
+            and filesystem issues).
 
     Returns:
         A safe, non-empty filename string.
     """
-    # Remove everything except word chars, whitespace, hyphens, and dots
-    safe = re.sub(r'[^\w\s\-.]', '', name)
+    if ascii_only:
+        # Keep only ASCII alphanumerics, underscores, hyphens, dots, spaces
+        safe = re.sub(r'[^a-zA-Z0-9_\s\-.]', '', name)
+    else:
+        # Keep Unicode word chars, whitespace, hyphens, and dots
+        safe = re.sub(r'[^\w\s\-.]', '', name)
     safe = re.sub(r'\s+', '_', safe.strip())
     result = safe[:max_length] if safe else 'chart'
     # Ensure we don't return an empty string after truncation

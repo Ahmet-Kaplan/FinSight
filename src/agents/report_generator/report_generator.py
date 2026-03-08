@@ -4,6 +4,7 @@ import os
 import re
 import copy
 import subprocess
+import json
 import numpy as np
 import docx2pdf
 from src.agents.base_agent import BaseAgent
@@ -18,6 +19,22 @@ class ReportGenerator(BaseAgent):
     AGENT_NAME = 'report_generator'
     AGENT_DESCRIPTION = 'a agent that can generate report from the data'
     NECESSARY_KEYS = ['task']
+
+    @staticmethod
+    def _resolve_prompt_profile(target_type: str) -> str:
+        """Map pipeline target_type to available report-generator prompt packs."""
+        if not target_type:
+            return 'general'
+        if target_type in ('general', 'company', 'industry', 'macro'):
+            return 'general'
+        if target_type in ('financial_company', 'financial_industry', 'financial_macro'):
+            return target_type
+        if target_type.startswith('financial_'):
+            return 'financial_company'
+        if target_type == 'governance':
+            return 'governance'
+        return 'general'
+
     def __init__(
         self,
         config,
@@ -47,10 +64,10 @@ class ReportGenerator(BaseAgent):
         target_language_name = language_mapping.get(target_language, target_language)
         self.target_language_name = target_language_name
         target_type = self.config.config.get('target_type', 'general')
-        
-        
+        prompt_profile = self._resolve_prompt_profile(target_type)
+
         # Load prompts using the new YAML-based loader
-        self.prompt_loader = get_prompt_loader('report_generator', report_type=target_type)
+        self.prompt_loader = get_prompt_loader('report_generator', report_type=prompt_profile)
         
         # Store prompts as instance attributes for easy access
         self.SECTION_WRITING_PROMPT = self.prompt_loader.get_prompt('section_writing')
@@ -78,7 +95,87 @@ class ReportGenerator(BaseAgent):
         self._section_index_done: int = 0
         # Post-process sub-stages: 0-image, 1-abstract/title, 2-cover, 3-reference, 4-render
         self._post_stage: int = 0
-        
+        # Fine-grained runtime status for outer progress tracker.
+        self._runtime_progress_detail: str = ""
+        self._runtime_progress_current: int | None = None
+        self._runtime_progress_total: int | None = None
+        # Snapshot of run-level artifacts discovered under output directory
+        self.run_artifacts: List[Dict[str, Any]] = []
+
+    def _set_runtime_progress(
+        self,
+        detail: str,
+        current: int | None = None,
+        total: int | None = None,
+    ) -> None:
+        self._runtime_progress_detail = str(detail or "").strip()
+        try:
+            self._runtime_progress_current = int(current) if current is not None else None
+        except Exception:
+            self._runtime_progress_current = None
+        try:
+            self._runtime_progress_total = int(total) if total is not None else None
+        except Exception:
+            self._runtime_progress_total = None
+
+    def _clear_runtime_progress(self) -> None:
+        self._runtime_progress_detail = ""
+        self._runtime_progress_current = None
+        self._runtime_progress_total = None
+
+    @staticmethod
+    def _safe_format_prompt(template: str, **kwargs: Any) -> str:
+        """Format prompt templates while tolerating missing placeholders."""
+        class _SafeDict(dict):
+            def __missing__(self, key):
+                return "{" + str(key) + "}"
+        try:
+            return str(template or "").format_map(_SafeDict(**kwargs))
+        except Exception:
+            return str(template or "")
+
+    def _build_grounded_editor_prompt(
+        self,
+        template: str,
+        *,
+        report_content: str,
+        task: str = "",
+    ) -> str:
+        """
+        Build title/abstract prompts with guaranteed report grounding.
+
+        Some prompt packs may omit `{report_content}` or `{task}` placeholders.
+        This helper appends explicit context so generated title/introduction
+        stays aligned with the actual report body and target topic.
+        """
+        prompt = self._safe_format_prompt(
+            template,
+            target_language=self.target_language_name,
+            report_content=report_content,
+            task=task,
+        )
+        raw_template = str(template or "")
+        has_report_placeholder = "{report_content}" in raw_template
+        has_task_placeholder = "{task}" in raw_template
+
+        context_chunks: List[str] = []
+        if task and not has_task_placeholder:
+            context_chunks.append(f"Target task/topic:\n{task}")
+        if not has_report_placeholder:
+            # Keep prompt size bounded while preserving sufficient context.
+            report_excerpt = str(report_content or "").strip()
+            max_chars = 24000
+            if len(report_excerpt) > max_chars:
+                report_excerpt = report_excerpt[:max_chars] + "\n...[truncated]..."
+            context_chunks.append(
+                "Use only the following report content as grounding context:"
+            )
+            context_chunks.append(f"```markdown\n{report_excerpt}\n```")
+
+        if context_chunks:
+            prompt = prompt.rstrip() + "\n\n---\n" + "\n\n".join(context_chunks)
+        return prompt
+
 
     def _set_default_tools(self):
         """
@@ -133,6 +230,164 @@ class ReportGenerator(BaseAgent):
         self.code_executor.set_variable("get_data", _get_data)
         self.code_executor.set_variable("get_analysis_result", _get_analysis_result)
         self.code_executor.set_variable("get_data_from_deep_search", _get_deepsearch_result)
+
+    def _refresh_run_artifacts_from_disk(self, max_items: int = 300) -> None:
+        """Refresh artifact inventory from this run's output directory."""
+        working_dir = self.config.config.get('working_dir', self.working_dir)
+        include_ext = {
+            ".md", ".docx", ".pdf", ".png", ".jpg", ".jpeg", ".csv",
+            ".tsv", ".xlsx", ".json", ".txt",
+        }
+        excluded_dirs = {".cache", ".executor_cache", "__pycache__", "logs", "memory"}
+        artifacts: List[Dict[str, Any]] = []
+        for root, dirs, files in os.walk(working_dir):
+            dirs[:] = [d for d in dirs if d not in excluded_dirs]
+            for filename in files:
+                ext = os.path.splitext(filename)[1].lower()
+                if ext not in include_ext:
+                    continue
+                abs_path = os.path.join(root, filename)
+                try:
+                    size = os.path.getsize(abs_path)
+                except OSError:
+                    size = -1
+                artifacts.append(
+                    {
+                        "path": os.path.relpath(abs_path, working_dir),
+                        "size_bytes": size,
+                    }
+                )
+                if len(artifacts) >= max_items:
+                    break
+            if len(artifacts) >= max_items:
+                break
+
+        # Merge pre-supplied and discovered artifacts by relative path
+        merged: Dict[str, Dict[str, Any]] = {}
+        for item in (self.run_artifacts or []) + artifacts:
+            path = str(item.get("path", "")).strip()
+            if not path:
+                continue
+            merged[path] = {
+                "path": path,
+                "size_bytes": item.get("size_bytes", -1),
+            }
+        self.run_artifacts = list(merged.values())
+
+    def _format_run_artifacts_context(self, max_items: int = 120) -> str:
+        """Return a compact artifact listing to force review before synthesis."""
+        if not self.run_artifacts:
+            return "No run artifacts were discovered yet."
+        lines = []
+        for item in self.run_artifacts[:max_items]:
+            path = item.get("path", "")
+            size = item.get("size_bytes", -1)
+            size_str = f"{size} bytes" if isinstance(size, int) and size >= 0 else "unknown size"
+            lines.append(f"- {path} ({size_str})")
+        return (
+            "Run Artifact Inventory (review these before writing final report sections):\n"
+            + "\n".join(lines)
+        )
+
+    def _format_master_decisions_context(self, max_items: int = 20) -> str:
+        """Load recent master steering decisions and format for synthesis traceability."""
+        state_dir = os.path.join(self.config.working_dir, "state")
+        decisions_path = os.path.join(state_dir, "master_decisions.jsonl")
+        if not os.path.exists(decisions_path):
+            return "No master decision trace was found for this run."
+        rows = []
+        try:
+            with open(decisions_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rows.append(json.loads(line))
+                    except Exception:
+                        continue
+        except Exception as e:
+            self.logger.warning(f"Failed to read master decision trace: {e}")
+            return "Master decision trace could not be loaded."
+        if not rows:
+            return "No master decision trace was found for this run."
+        rows = rows[-max_items:]
+        lines = []
+        for item in rows:
+            cycle = item.get("cycle_index", "?")
+            trigger = item.get("trigger", "unknown")
+            confidence = item.get("confidence", 0)
+            rationale = str(item.get("rationale", ""))[:180]
+            mutation_count = len(item.get("mutations", []) or [])
+            lines.append(
+                f"- cycle={cycle} trigger={trigger} confidence={confidence} "
+                f"mutations={mutation_count} rationale={rationale}"
+            )
+        return "Master Decision Trace (recent cycles):\n" + "\n".join(lines)
+
+    @staticmethod
+    def _build_reference_summary(items: List[Any], empty_text: str) -> str:
+        """Create a compact, resilient summary for prompt placeholders."""
+        if not items:
+            return empty_text
+        lines: List[str] = []
+        for idx, item in enumerate(items):
+            try:
+                text = item.brief_str()
+            except Exception:
+                text = str(item)
+            text = str(text).strip()
+            if not text:
+                continue
+            if len(text) > 2000:
+                text = text[:2000] + "..."
+            lines.append(f"[{idx}] {text}")
+        return "\n\n".join(lines) if lines else empty_text
+
+    @staticmethod
+    def _build_reference_image_list(analysis_result_list: List[Any]) -> str:
+        """Collect chart/table filenames exposed by analysis results."""
+        images: List[str] = []
+        seen = set()
+        for analysis_result in analysis_result_list:
+            getter = getattr(analysis_result, "get_all_img", None)
+            if not callable(getter):
+                continue
+            try:
+                candidates = getter() or []
+            except Exception:
+                candidates = []
+            for image in candidates:
+                name = str(image).strip()
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                images.append(name)
+        return "\n".join(images) if images else "No chart or table filenames available."
+
+    def _write_artifact_review_trace(self, phase: str, intentionally_excluded: List[str] | None = None) -> None:
+        """Persist artifact inclusion/exclusion trace for auditability."""
+        intentionally_excluded = intentionally_excluded or []
+        state_dir = os.path.join(self.config.working_dir, "state")
+        os.makedirs(state_dir, exist_ok=True)
+        trace_path = os.path.join(state_dir, "artifact_review_trace.json")
+        included = [str(item.get("path", "")) for item in self.run_artifacts if str(item.get("path", "")).strip()]
+        payload = {
+            "phase": phase,
+            "generated_at": self.current_time,
+            "reviewed_count": len(included),
+            "included_artifacts": included,
+            "intentionally_excluded": intentionally_excluded,
+            "confirmation": (
+                "All artifacts listed above were reviewed for synthesis, unless explicitly "
+                "listed in intentionally_excluded."
+            ),
+        }
+        try:
+            with open(trace_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.logger.warning(f"Failed to persist artifact review trace: {e}")
         
     
     async def _prepare_init_prompt(self, input_data: dict) -> list[dict]:
@@ -148,6 +403,15 @@ class ReportGenerator(BaseAgent):
         # Prepare data information for the agent
         collect_data_list = self.memory.get_collect_data(exclude_type=['search', 'click'])
         analysis_result_list = self.memory.get_analysis_result()
+        reference_data = self._build_reference_summary(
+            collect_data_list,
+            "No collected datasets are currently available.",
+        )
+        reference_analysis = self._build_reference_summary(
+            analysis_result_list,
+            "No collected analysis excerpts are currently available.",
+        )
+        reference_image = self._build_reference_image_list(analysis_result_list)
         data_info = "\n\n## Available Datas\n\n"
         for idx, item in enumerate(collect_data_list):
             data_info += f"**Data ID {idx}:**\n{item.brief_str()}\n\n"
@@ -156,6 +420,15 @@ class ReportGenerator(BaseAgent):
         for idx, item in enumerate(analysis_result_list):
             data_info += f"**Analysis Report ID {idx}:**\n{item.brief_str()}\n\n"
         data_info += "\nYou can access these analysis reports using `get_analysis_result(analysis_result_id)` in your code.\n"
+        data_info += "\n\n## Run Artifacts\n\n"
+        data_info += self._format_run_artifacts_context()
+        data_info += "\n\n## Master Steering Decisions\n\n"
+        data_info += self._format_master_decisions_context()
+        data_info += (
+            "\n\nUse the artifact inventory to avoid redoing completed work and to "
+            "cross-check section claims against already generated materials. "
+            "Also incorporate master steering decisions into the final narrative and evidence weighting."
+        )
         
         if self.enable_chart:
             return [{
@@ -164,6 +437,9 @@ class ReportGenerator(BaseAgent):
                     task=task,
                     report_theme=input_data.get('task'),
                     section_description=section_outline,
+                    reference_data=reference_data,
+                    reference_analysis=reference_analysis,
+                    reference_image=reference_image,
                     data_api=data_api_description,
                     data_info=data_info,
                     max_iterations=max_iterations,
@@ -177,6 +453,9 @@ class ReportGenerator(BaseAgent):
                     task=task,
                     report_theme=input_data.get('task'),
                     section_description=section_outline,
+                    reference_data=reference_data,
+                    reference_analysis=reference_analysis,
+                    reference_image=reference_image,
                     data_api=data_api_description,
                     data_info=data_info,
                     max_iterations=max_iterations,
@@ -220,13 +499,21 @@ class ReportGenerator(BaseAgent):
         }
     
     async def _final_polish(self, section_input_data, draft_section: str):
+        all_collect_data = self.memory.get_collect_data(exclude_type=['search', 'click'])
         all_analysis_result = self.memory.get_analysis_result()
-        all_image_list = []
-        for analysis_result in all_analysis_result:
-            all_image_list.extend(analysis_result.get_all_img())
-        reference_image = '\n'.join(all_image_list)
+        reference_data = self._build_reference_summary(
+            all_collect_data,
+            "No collected datasets are currently available.",
+        )
+        reference_analysis = self._build_reference_summary(
+            all_analysis_result,
+            "No collected analysis excerpts are currently available.",
+        )
+        reference_image = self._build_reference_image_list(all_analysis_result)
         
         final_prompt = self.FINAL_POLISH_PROMPT.format(
+            reference_data = reference_data,
+            reference_analysis = reference_analysis,
             draft_report = draft_section,
             reference_image = reference_image,
             target_language = self.target_language_name
@@ -337,23 +624,34 @@ class ReportGenerator(BaseAgent):
         """
         abstract_prompt = self.ABSTRACT_PROMPT
         title_prompt = self.TITLE_PROMPT
+        task_text = str((input_data or {}).get("task", "") or "")
 
+        abstract_user_prompt = self._build_grounded_editor_prompt(
+            abstract_prompt,
+            report_content=report.content,
+            task=task_text,
+        )
 
         response_content = await self.llm.generate(
             messages = [
             {
                 'role': 'user',
-                'content': abstract_prompt.format(target_language=self.target_language_name, report_content=report.content)
+                'content': abstract_user_prompt
             }
         ])
         response_content = extract_markdown(response_content)
         report.abstract = response_content
-        
+
+        title_user_prompt = self._build_grounded_editor_prompt(
+            title_prompt,
+            report_content=report.content,
+            task=task_text,
+        )
         new_title = await self.llm.generate(
             messages = [
             {
                 'role': 'user',
-                'content': title_prompt.format(target_language=self.target_language_name, report_content=report.content)
+                'content': title_user_prompt
             }
         ])
         new_title = new_title.replace("#","").strip()
@@ -439,6 +737,7 @@ class ReportGenerator(BaseAgent):
         """
         Append the reference-data section and replace placeholder citations.
         """
+        self._set_runtime_progress("[Phase2] Step 3: preparing reference corpus")
         collect_data_list = self.memory.get_collect_data() # only use data, without analysis result
         all_data = []
         for item in collect_data_list:
@@ -463,10 +762,25 @@ class ReportGenerator(BaseAgent):
         
         total_corpus = [item['name'] for item in all_data]
         index = IndexBuilder(config=self.config, embedding_model=self.use_embedding_name, working_dir=self.working_dir)
-        await index._build_index(total_corpus)
+        self._set_runtime_progress("[Phase2] Step 3: building reference index", 0, max(1, (len(total_corpus) + 31) // 32))
+        def _on_index_progress(done_batches: int, total_batches: int) -> None:
+            self._set_runtime_progress(
+                "[Phase2] Step 3: building reference index",
+                done_batches,
+                total_batches,
+            )
+        await index._build_index(
+            total_corpus,
+            progress_callback=_on_index_progress,
+            progress_desc="Building reference index",
+            use_tqdm=False,
+        )
 
         total_cited_dict = {}
-        for section in report.sections:
+        total_sections = max(len(report.sections), 1)
+        self._set_runtime_progress("[Phase2] Step 3: resolving citations", 0, total_sections)
+        for section_idx, section in enumerate(report.sections, start=1):
+            self._set_runtime_progress("[Phase2] Step 3: resolving citations", section_idx, total_sections)
             # Optional: log section length
             try:
                 self.logger.debug(f"Processing section, content length={len(section.content)}")
@@ -511,6 +825,7 @@ class ReportGenerator(BaseAgent):
                 section_new_content.append(content)
             section._content = section_new_content
 
+        self._set_runtime_progress("[Phase2] Step 3: assembling reference section")
 
         reference_str = "## Reference Data Sources\n\n"
         for old_index, new_index in total_cited_dict.items():
@@ -520,6 +835,7 @@ class ReportGenerator(BaseAgent):
         new_section = Section('Reference Data Sources', reference_str)
         new_section.set_content(reference_str)
         report.sections.append(new_section)
+        self._set_runtime_progress("[Phase2] Step 3: references complete")
         return report
 
         
@@ -540,6 +856,7 @@ class ReportGenerator(BaseAgent):
         }
         # 0 Replace image paths
         if self._post_stage <= 0:
+            self._set_runtime_progress("[Phase2] Step 0: replace image paths")
             self.logger.info("[Phase2] Step 0: replace image paths")
             report = await self._replace_image_path(report)
             self._post_stage = 1
@@ -552,16 +869,24 @@ class ReportGenerator(BaseAgent):
         # 1 Add abstract/title (conditional based on add_introduction setting)
         if self._post_stage <= 1:
             if getattr(self, 'add_introduction', True):
+                self._set_runtime_progress("[Phase2] Step 1: add abstract and title")
                 self.logger.info("[Phase2] Step 1: add abstract and title")
                 report = await self._add_abstract(input_data, report)
             else:
+                self._set_runtime_progress("[Phase2] Step 1: skip abstract/introduction")
                 self.logger.info("[Phase2] Step 1: skipping abstract/introduction (add_introduction=False for general reports)")
                 # Still generate a better title
+                task_text = str((input_data or {}).get("task", "") or "")
+                title_user_prompt = self._build_grounded_editor_prompt(
+                    self.TITLE_PROMPT,
+                    report_content=report.content,
+                    task=task_text,
+                )
                 new_title = await self.llm.generate(
                     messages = [
                     {
                         'role': 'user',
-                        'content': self.TITLE_PROMPT.format(target_language=self.target_language_name, report_content=report.content)
+                        'content': title_user_prompt
                     }
                 ])
                 new_title = new_title.replace("#","").strip()
@@ -575,6 +900,7 @@ class ReportGenerator(BaseAgent):
 
         # 2 Add cover/basic data page
         if self._post_stage <= 2:
+            self._set_runtime_progress("[Phase2] Step 2: add cover/basic data page")
             self.logger.info("[Phase2] Step 2: add cover/basic data page")
             report = await self._add_cover_page(input_data, report)
             self._post_stage = 3
@@ -587,9 +913,11 @@ class ReportGenerator(BaseAgent):
         # 3 Add references (conditional based on add_reference_section setting)
         if self._post_stage <= 3:
             if getattr(self, 'add_reference_section', True):
+                self._set_runtime_progress("[Phase2] Step 3: add references")
                 self.logger.info("[Phase2] Step 3: add references")
                 report = await self._add_reference(report)
             else:
+                self._set_runtime_progress("[Phase2] Step 3: skip references")
                 self.logger.info("[Phase2] Step 3: skipping reference section (add_reference_section=False)")
             self._post_stage = 4
             current_state['report_obj_stage4'] = copy.deepcopy(report)
@@ -607,6 +935,7 @@ class ReportGenerator(BaseAgent):
 
         # 4 Render to docx
         if self._post_stage <= 4:
+            self._set_runtime_progress("[Phase2] Step 4: render markdown/docx/pdf")
             self.logger.info("[Phase2] Step 4: render report to docx")
             working_dir = self.config.config['working_dir']
             md_path = os.path.join(working_dir, f'{report.title}.md')
@@ -643,17 +972,35 @@ class ReportGenerator(BaseAgent):
                     "Check section generation logs for errors."
                 )
 
+            # --- PDF generation controlled by pdf_mode (auto / force / skip) ---
+            pdf_mode = self.config.config.get('pdf_mode', 'auto')
             pdf_path = docx_path.replace(".docx", ".pdf")
-            try:
-                docx2pdf.convert(docx_path, pdf_path)
-            except Exception as e:
-                self.logger.error(f"Failed to convert docx to pdf: {e}", exc_info=True)
+            pdf_status = ''
+
+            if pdf_mode == 'skip':
+                pdf_status = f'skipped (pdf_mode=skip). DOCX at: {docx_path}'
+                self.logger.info(f"PDF: {pdf_status}")
+            elif pdf_mode in ('auto', 'force'):
+                try:
+                    docx2pdf.convert(docx_path, pdf_path)
+                    pdf_status = f'generated at {pdf_path}'
+                    self.logger.info(f"PDF: {pdf_status}")
+                except Exception as e:
+                    pdf_status = f'conversion failed ({e}). DOCX available at: {docx_path}'
+                    if pdf_mode == 'force':
+                        self.logger.error(f"PDF: {pdf_status}")
+                        raise RuntimeError(f"PDF: {pdf_status}") from e
+                    else:
+                        self.logger.warning(f"PDF: {pdf_status}")
+
             self._post_stage = 5
             current_state['rendered_md'] = md_path
             current_state['rendered_docx'] = docx_path
+            current_state['pdf_status'] = pdf_status
             current_state['finished'] = True
             await self.save(state=current_state, checkpoint_name='report_latest.pkl')
             self.logger.info(f"[Phase2] Step 4 done, rendered files: md={md_path}, docx={docx_path}, pdf={pdf_path}")
+            self._set_runtime_progress("[Phase2] Completed post processing")
         return report
 
     def _get_persist_extra_state(self) -> Dict[str, Any]:
@@ -664,6 +1011,9 @@ class ReportGenerator(BaseAgent):
             'phase': getattr(self, '_phase', 'outline'),
             'section_index': getattr(self, '_section_index_done', 0),
             'post_stage': getattr(self, '_post_stage', 0),
+            'runtime_progress_detail': getattr(self, '_runtime_progress_detail', ''),
+            'runtime_progress_current': getattr(self, '_runtime_progress_current', None),
+            'runtime_progress_total': getattr(self, '_runtime_progress_total', None),
         }
 
     def _load_persist_extra_state(self, state: Dict[str, Any]):
@@ -690,6 +1040,30 @@ class ReportGenerator(BaseAgent):
                 self._post_stage = int(post_stage)
             except Exception:
                 pass
+
+        runtime_progress_detail = extra.get('runtime_progress_detail')
+        if runtime_progress_detail is None:
+            runtime_progress_detail = state.get('runtime_progress_detail')
+        if runtime_progress_detail is not None:
+            self._runtime_progress_detail = str(runtime_progress_detail)
+
+        runtime_progress_current = extra.get('runtime_progress_current')
+        if runtime_progress_current is None:
+            runtime_progress_current = state.get('runtime_progress_current')
+        if runtime_progress_current is not None:
+            try:
+                self._runtime_progress_current = int(runtime_progress_current)
+            except Exception:
+                self._runtime_progress_current = None
+
+        runtime_progress_total = extra.get('runtime_progress_total')
+        if runtime_progress_total is None:
+            runtime_progress_total = state.get('runtime_progress_total')
+        if runtime_progress_total is not None:
+            try:
+                self._runtime_progress_total = int(runtime_progress_total)
+            except Exception:
+                self._runtime_progress_total = None
         
         enable_chart = extra.get('enable_chart') or state.get('enable_chart')
         if enable_chart is not None:
@@ -717,6 +1091,14 @@ class ReportGenerator(BaseAgent):
         for idx, result in enumerate(analysis_result_list):
             data_info += f"**Analysis Report ID {idx}:**\n{result.brief_str()}\n\n"
         data_info += "\nYou can retrieve detailed content using `get_analysis_result(analysis_id)` in your code.\n"
+        data_info += "\n\n## Run Artifacts\n\n"
+        data_info += self._format_run_artifacts_context()
+        data_info += "\n\n## Master Steering Decisions\n\n"
+        data_info += self._format_master_decisions_context()
+        data_info += (
+            "\n\nBefore producing the final outline, review these artifacts and ensure "
+            "the report synthesizes all available evidence from this run and reflects master steering decisions."
+        )
         
         initial_prompt = self.DRAFT_GENERATOR_PROMPT.format(
             task=input_data['task'],
@@ -812,6 +1194,14 @@ class ReportGenerator(BaseAgent):
             self.add_introduction = add_introduction
         
         self.add_reference_section = add_reference_section
+
+        if isinstance(input_data.get('run_artifacts'), list):
+            self.run_artifacts = list(input_data.get('run_artifacts'))
+        self._refresh_run_artifacts_from_disk()
+        self.logger.info(
+            f"[Artifact Review] Indexed {len(self.run_artifacts)} artifact(s) under run output directory"
+        )
+        self._write_artifact_review_trace(phase="start")
         
         if resume:
             state = await self.load(checkpoint_name=checkpoint_name)
@@ -836,6 +1226,7 @@ class ReportGenerator(BaseAgent):
         
         # Phase 0: outline generation
         if self._phase == 'outline' or report is None:
+            self._set_runtime_progress("[Phase0] generating outline")
             self.logger.info("[Phase0] Generating Report Outline")
             report = await self.generate_outline(
                 input_data, 
@@ -859,9 +1250,11 @@ class ReportGenerator(BaseAgent):
             self.memory.save()
             self.logger.info(f"[Phase0] Completed: outline sections={len(report.sections)}")
 
-        
+
         # Phase 1: per-section generation
         if self._phase == 'sections':
+            total_sections = max(len(report.sections), 1)
+            self._set_runtime_progress("[Phase1] generating sections", start_index, total_sections)
             self.logger.info("[Phase1] Begin generating sections")
             # TODO: parallel generation of sections
             for idx, section in enumerate(report.sections):
@@ -869,6 +1262,7 @@ class ReportGenerator(BaseAgent):
                     continue
                 section_input_data = input_data.copy()
                 section_input_data['section_outline'] = section.outline
+                self._set_runtime_progress("[Phase1] generating sections", idx + 1, total_sections)
                 self.logger.info(f"[Phase1] Section {idx+1}/{len(report.sections)} start")
                 
                 # Prepare executor with data access functions for agentic workflow
@@ -911,6 +1305,7 @@ class ReportGenerator(BaseAgent):
                 self.memory.save()
                 # Update in-memory progress pointer
                 self._section_index_done = idx + 1
+                self._set_runtime_progress("[Phase1] generating sections", self._section_index_done, total_sections)
                 self.logger.info(f"[Phase1] Section {idx+1} done, checkpoint saved (section_index={self._section_index_done})")
             
             # Move to post-process stage once all sections are done
@@ -930,10 +1325,13 @@ class ReportGenerator(BaseAgent):
 
         # Phase 2: post processing (resumable)
         if self._phase == 'post_process':
+            self._set_runtime_progress("[Phase2] begin post processing")
             self.logger.info("[Phase2] Begin post processing")
             report = await self.post_process_report(input_data, report)
             self.memory.save()
+            self._write_artifact_review_trace(phase="final")
             self.logger.info("[Phase2] Completed post processing")
 
+        self._clear_runtime_progress()
         return report
     

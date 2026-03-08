@@ -1,5 +1,6 @@
 import asyncio
 import random
+import os
 from openai import OpenAI, AsyncOpenAI
 from typing import List, Dict, Optional, Union, Any
 
@@ -81,6 +82,10 @@ class AsyncLLM:
         )
         self.generation_params = generation_params or {}
         self.model_name = model_name
+        try:
+            self.request_timeout_sec = float(os.getenv("LLM_REQUEST_TIMEOUT_SEC", "120"))
+        except Exception:
+            self.request_timeout_sec = 120.0
     
     async def generate_embeddings(
         self, input_texts: List[str],
@@ -94,7 +99,7 @@ class AsyncLLM:
     async def generate(
         self, 
         messages: List[Dict[str, str]],
-        max_retries_per_model: int = 5,
+        max_retries_per_model: Optional[int] = None,
         include_stop_string=True,
         **params
     ) -> Union[str, Any]:
@@ -102,14 +107,22 @@ class AsyncLLM:
             raise NotImplementedError("Invalid async client provided.")
 
         last_exception = None
-        
-        
-        for attempt in range(max_retries_per_model):
+        retries = max_retries_per_model
+        if retries is None:
             try:
+                retries = int(os.getenv("LLM_MAX_RETRIES_PER_MODEL", "5"))
+            except Exception:
+                retries = 5
+        retries = max(1, int(retries))
+        
+        
+        for attempt in range(retries):
+            try:
+                request_timeout = params.get("timeout", self.request_timeout_sec)
                 response = await self.client.chat.completions.create(
                     model=self.model_name,
                     messages=messages,
-                    **{**self.generation_params, **params}
+                    **{**self.generation_params, **params, "timeout": request_timeout}
                 )
                 if hasattr(response, 'choices') and response.choices:
                     output =  response.choices[0].message.content
@@ -156,7 +169,7 @@ class AsyncLLM:
                 base_delay = min(2 ** attempt, 32)  # 1, 2, 4, 8, 16, 32
                 jitter = random.uniform(0, base_delay * 0.5)
                 delay = base_delay + jitter
-                print(f"Retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries_per_model})")
+                print(f"Retrying in {delay:.1f}s (attempt {attempt + 1}/{retries})")
                 await asyncio.sleep(delay)
 
         

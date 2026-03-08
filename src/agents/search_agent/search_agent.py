@@ -1,4 +1,6 @@
 from typing import List, Dict, Any, Tuple
+from urllib.parse import urlparse
+import re
 
 from src.agents.base_agent import BaseAgent
 from src.tools.web.search_engine_requests import BingSearch, BochaSearch, SerperSearch
@@ -52,12 +54,24 @@ class DeepSearchAgent(BaseAgent):
         self.search_queries = []
         # Track consecutive searches returning no new unique URLs
         self.no_new_info_count = 0
+        # Track low-quality/irrelevant click attempts
+        self.irrelevant_clicks = 0
+        self.low_quality_domains = {
+            "linkedin.com",
+            "x.com",
+            "twitter.com",
+            "reddit.com",
+            "medium.com",
+            "substack.com",
+            "quora.com",
+        }
     
     
     async def _prepare_init_prompt(self, input_data: dict) -> list[dict]:
         basic_task = input_data.get('task', '')
         query = input_data.get('query', None)
         max_iterations = input_data.get('max_iterations', 5)
+        handoff_bundle = input_data.get('handoff_bundle')
 
         if not query:
             raise ValueError("Input data must contain a 'task' key.")
@@ -70,15 +84,23 @@ class DeepSearchAgent(BaseAgent):
         }
         target_language_name = language_mapping.get(target_language, target_language)
             
+        prompt_text = self.DEEP_SEARCH_PROMPT.format(
+            basic_task=basic_task,
+            question=query,
+            current_time=self.current_time,
+            max_iterations=max_iterations,
+            target_language=target_language_name
+        )
+        if handoff_bundle:
+            prompt_text += (
+                "\n\n## Resume Handoff Context\n"
+                "Use the following prior evidence/dead-ends to avoid duplicate searching:\n"
+                f"{handoff_bundle}\n"
+            )
+
         return [{
             "role": "user",
-            "content": self.DEEP_SEARCH_PROMPT.format(
-                basic_task=basic_task,
-                question=query,
-                current_time=self.current_time,
-                max_iterations=max_iterations,
-                target_language=target_language_name
-            )
+            "content": prompt_text
         }]
 
     async def _handle_max_round(self, conversation_history):
@@ -93,6 +115,32 @@ class DeepSearchAgent(BaseAgent):
         )
         final_result = response
         return {'coversation_history': conversation_history, 'final_result': final_result}
+
+    @staticmethod
+    def _tokenize(text: str) -> set[str]:
+        tokens = re.findall(r"[a-zA-Z0-9\u4e00-\u9fff]+", str(text or "").lower())
+        stop = {
+            "the", "and", "for", "with", "from", "that", "this", "what", "when",
+            "where", "which", "are", "was", "were", "into", "your", "have", "has",
+            "2024", "2025", "2026",
+        }
+        return {t for t in tokens if len(t) > 1 and t not in stop}
+
+    def _relevance_score(self, query: str, title: str, desc: str, url: str) -> float:
+        q = self._tokenize(query)
+        d = self._tokenize(f"{title} {desc} {url}")
+        if not q or not d:
+            return 0.0
+        overlap = len(q.intersection(d))
+        return overlap / max(len(q), 1)
+
+    def _is_low_quality_url(self, url: str, query: str) -> bool:
+        host = urlparse(url).netloc.lower().replace("www.", "")
+        if host not in self.low_quality_domains:
+            return False
+        q = str(query or "").lower()
+        allow_terms = ("social", "tweet", "linkedin", "x.com", "twitter", "reddit")
+        return not any(term in q for term in allow_terms)
     
     async def _handle_search_action(self, action_content):
         search_engine = [item for item in self.tools if 'search' in item.name.lower()][0]
@@ -202,7 +250,6 @@ class DeepSearchAgent(BaseAgent):
     async def _handle_click_action(self, action_content):
         click_engine = [item for item in self.tools if 'content fetcher' in item.name.lower()][0]
         current_task = self.current_task_data.get('task', '')
-        query = self.current_task_data.get('query', '')
 
         # Validate that the URL was from search results
         if action_content not in self.valid_links:
@@ -227,6 +274,49 @@ class DeepSearchAgent(BaseAgent):
                 "continue": True
             }
 
+        query = self.current_task_data.get('query', '')
+        info = self.valid_links.get(action_content, {})
+        title = info.get('title', '')
+        description = info.get('description', '')
+        relevance = self._relevance_score(query, title, description, action_content)
+        if self._is_low_quality_url(action_content, query):
+            self.irrelevant_clicks += 1
+            result = (
+                f"URL rejected due to low source quality for quantitative research: {action_content}\n"
+                "Use primary/authoritative sources (official reports, filings, investor relations, "
+                "regulators, multilateral institutions) unless social sources are explicitly required."
+            )
+            if self.irrelevant_clicks >= 3:
+                result += (
+                    "\n\n⚠️ Multiple low-quality clicks were blocked. "
+                    "Consider finalizing with authoritative evidence gathered so far."
+                )
+            return {
+                "action": "click",
+                "action_content": action_content,
+                "result": result,
+                "continue": True,
+            }
+
+        if relevance < 0.08:
+            self.irrelevant_clicks += 1
+            result = (
+                f"URL rejected due to low relevance score ({relevance:.2f}) for current query.\n"
+                f"Query: {query}\nURL: {action_content}\n"
+                "Select a more relevant result from prior searches or run a new targeted search."
+            )
+            if self.irrelevant_clicks >= 3:
+                result += (
+                    "\n\n⚠️ 3+ irrelevant clicks attempted. "
+                    "Either pivot search strategy or finalize the report with current evidence."
+                )
+            return {
+                "action": "click",
+                "action_content": action_content,
+                "result": result,
+                "continue": True,
+            }
+
         try:
             self.logger.info(f"Click action started: url={action_content}")
             click_result = await click_engine.api_function([action_content], f'Research goal: {current_task}; query: {query}')
@@ -235,6 +325,7 @@ class DeepSearchAgent(BaseAgent):
                 self.failed_clicks += 1
             else:
                 result = click_result[0].data
+                self.irrelevant_clicks = 0
                 # Track this as a used source with content summary
                 source_title = self.link2name.get(action_content, self.valid_links.get(action_content, {}).get('title', 'Unknown'))
                 self.used_sources[action_content] = {
@@ -337,6 +428,7 @@ class DeepSearchAgent(BaseAgent):
             'failed_clicks': self.failed_clicks,
             'search_queries': self.search_queries,
             'no_new_info_count': self.no_new_info_count,
+            'irrelevant_clicks': self.irrelevant_clicks,
         }
 
     def _load_persist_extra_state(self, state: dict):
@@ -347,11 +439,12 @@ class DeepSearchAgent(BaseAgent):
         self.failed_clicks = state.get('failed_clicks', 0)
         self.search_queries = state.get('search_queries', [])
         self.no_new_info_count = state.get('no_new_info_count', 0)
+        self.irrelevant_clicks = state.get('irrelevant_clicks', 0)
 
     async def async_run(
         self, 
         input_data: dict, 
-        max_iterations: int = 30,
+        max_iterations: int = 12,
         stop_words: list[str] = [],
         echo=False,
         resume: bool = True,

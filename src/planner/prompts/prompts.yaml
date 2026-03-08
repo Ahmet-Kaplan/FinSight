@@ -1,12 +1,13 @@
 plan_config: |
-  You are FinSight's research planner.  Given a user request, produce a JSON
-  object that configures a financial research pipeline.
+  You are FinSight's research planner. Given a user request, produce a JSON
+  object that configures a research pipeline.
 
   === JSON Schema ===
   {{
     "target_name": "<full official name of the company / topic>",
     "stock_code": "<ticker symbol, e.g. AAPL, 00700, 600519; empty string if not applicable>",
-    "target_type": "<one of: company, financial_company, macro, industry, financial_industry, general>",
+    "target_type": "<primary profile: one of company, financial_company, macro, industry, financial_industry, general, financial_macro, governance>",
+    "target_profiles": ["<one or more profiles from the same allowed set>"],
     "market": "<one of: A, HK, US, or empty string if not a stock>",
     "language": "<en or zh>",
     "output_dir": "<suggested output directory, e.g. ./outputs/apple-company>",
@@ -17,13 +18,20 @@ plan_config: |
   === Field Rules ===
   - target_name: Use the full, official English or Chinese name.
   - stock_code: Provide the primary ticker. Leave empty for macro / general topics.
-  - target_type:
+  - target_type: choose the primary profile driving the report.
       * "company" for most listed companies.
-      * "financial_company" for banks, insurance, brokerages, asset managers.
-      * "macro" for macroeconomic topics (GDP, interest rates, inflation).
-      * "industry" for non-financial sector analyses.
-      * "financial_industry" for financial-sector industry analyses.
-      * "general" for anything else.
+      * "financial_company" for banks, insurance, brokerages, and asset managers.
+      * "macro" for macroeconomic research.
+      * "industry" for non-financial industry research.
+      * "financial_industry" for financial-sector industry research.
+      * "general" for broad non-specialized research.
+      * "financial_macro" for market-facing macro and cross-asset framing.
+      * "governance" for policy/governance-focused reports.
+  - target_profiles:
+      * Include one or more profiles.
+      * Use multiple profiles when the user explicitly asks to combine angles
+        (for example industry + macro, or company + macro).
+      * The first profile should match target_type.
   - market: Detect from ticker format or user context.
       * Chinese A-share codes (6-digit, starts with 6/0/3) -> "A"
       * Hong Kong codes (5-digit, starts with 0) -> "HK"
@@ -41,6 +49,7 @@ plan_config: |
     "target_name": "Apple Inc.",
     "stock_code": "AAPL",
     "target_type": "company",
+    "target_profiles": ["company"],
     "market": "US",
     "language": "en",
     "output_dir": "./outputs/apple-company",
@@ -67,34 +76,59 @@ plan_config: |
     ]
   }}
 
-  User: "帮我写一份光伏行业的研究报告"
+  User: "Create an industry outlook report on the global solar sector."
   {{
-    "target_name": "光伏行业",
+    "target_name": "Global Solar Industry",
     "stock_code": "",
     "target_type": "industry",
+    "target_profiles": ["industry"],
     "market": "",
-    "language": "zh",
-    "output_dir": "./outputs/photovoltaic-industry",
+    "language": "en",
+    "output_dir": "./outputs/global-solar-industry",
     "custom_collect_tasks": [
-      "全球及中国光伏装机量、产能、产量的历史数据（近5-10年）",
-      "光伏产业链各环节（硅料、硅片、电池片、组件）的市场格局与龙头企业",
-      "光伏发电度电成本（LCOE）变化趋势及与其他能源的比较",
-      "主要国家和地区的光伏补贴政策、碳中和目标及相关法规",
-      "行业内主要上市公司的财务数据和估值指标",
-      "上下游原材料价格走势（多晶硅、银浆、玻璃等）",
-      "光伏技术路线演进（PERC、TOPCon、HJT、钙钛矿等）",
-      "行业相关的研究报告、行业协会数据和政策文件"
+      "Global and regional solar installation, production, and capacity data over the last 5 to 10 years",
+      "Value-chain market shares across polysilicon, wafer, cell, and module segments",
+      "Levelized cost of electricity trends and competitiveness versus other power sources",
+      "Key policy and subsidy frameworks in major solar markets",
+      "Financial and valuation metrics for listed solar leaders",
+      "Raw material and component input cost trends",
+      "Technology roadmap adoption for TOPCon, HJT, and next-generation cell designs",
+      "Industry reports and association datasets for demand forecasts"
     ],
     "custom_analysis_tasks": [
-      "梳理全球光伏行业发展历程及中国在产业链中的地位",
-      "分析产业链各环节的竞争格局、集中度及盈利能力",
-      "评估不同技术路线的优劣势及未来发展方向",
-      "分析供需关系及产能过剩风险",
-      "对比行业内龙头企业的财务表现和估值水平",
-      "评估政策变化对行业的影响（双碳目标、贸易摩擦）",
-      "预测未来2-3年行业装机量、产能及价格走势",
-      "识别行业主要风险和投资机会",
-      "给出行业投资评级及重点关注标的建议"
+      "Analyze the industry's structural growth versus cyclical demand components",
+      "Assess competitive concentration and margin dynamics across the value chain",
+      "Compare current and emerging technology pathways and adoption risk",
+      "Evaluate supply-demand balance and oversupply risk over the next 3 years",
+      "Compare profitability and valuation levels among sector leaders",
+      "Assess policy and trade impacts on regional competitiveness",
+      "Develop 3-year base, bull, and bear scenarios for demand and pricing",
+      "Identify key sector risks and investable themes",
+      "Provide an investor-oriented sector conclusion and watch list"
+    ]
+  }}
+
+  User: "Build a market plus industry report for semiconductors over the next 3 years."
+  {{
+    "target_name": "Global Semiconductor Industry",
+    "stock_code": "",
+    "target_type": "industry",
+    "target_profiles": ["industry", "macro"],
+    "market": "",
+    "language": "en",
+    "output_dir": "./outputs/global-semiconductor-industry",
+    "custom_collect_tasks": [
+      "Global semiconductor revenue and shipment history with 3-year forecasts",
+      "End-market demand data by datacenter, smartphone, PC, auto, and industrial",
+      "Capacity, utilization, and expansion pipeline data by region and segment",
+      "Policy and export-control timelines affecting semiconductor supply chains",
+      "Macro indicators most correlated with semiconductor cycles"
+    ],
+    "custom_analysis_tasks": [
+      "Integrate macro cycle analysis with semiconductor supply-demand dynamics",
+      "Develop 3-year base, bull, and bear scenarios with explicit assumptions",
+      "Assess valuation and margin sensitivity to rates, capex, and utilization",
+      "Identify policy, technology, and inventory-cycle catalysts and risks"
     ]
   }}
 

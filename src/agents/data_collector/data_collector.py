@@ -94,6 +94,15 @@ class DataCollector(BaseAgent):
         task = input_data.get('task')
         if not task:
             raise ValueError("Input data must contain a 'task' key.")
+        max_iterations = int(input_data.get('max_iterations', 10))
+        handoff_bundle = input_data.get('handoff_bundle')
+        handoff_text = ""
+        if handoff_bundle:
+            handoff_text = (
+                "\n\n## Resume Handoff Context\n"
+                "Use this to avoid duplicate work and continue quickly:\n"
+                f"{handoff_bundle}\n"
+            )
         
         # Get target language from config
         target_language = self.config.config.get('language', 'zh')
@@ -114,9 +123,11 @@ class DataCollector(BaseAgent):
                 api_descriptions=self._get_api_descriptions(),
                 current_time=self.current_time,
                 task=task,
+                max_iterations=max_iterations,
                 target_language=target_language_name,
                 research_target=research_target
             )
+            + handoff_text
         }]
     
 
@@ -133,6 +144,8 @@ class DataCollector(BaseAgent):
         # Reset collected-data cache for each run
         self.collected_data_list = []
         self.logger.info(f"DataCollector started: task={input_data.get('task','')} resume={resume}")
+        input_data = dict(input_data)
+        input_data['max_iterations'] = max_iterations
         await self._prepare_executor()
         run_result = await super().async_run(
             input_data=input_data,

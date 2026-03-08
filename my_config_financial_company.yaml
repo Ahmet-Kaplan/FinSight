@@ -1,0 +1,35 @@
+profile_name: financial_company
+target_type: financial_company
+language: en
+reference_doc_path: src/template/report_template.docx
+outline_template_path: src/template/company_outline.md
+
+custom_collect_tasks:
+  - Regulatory capital metrics including CET1, Tier 1, leverage ratio, and buffers
+  - Asset quality metrics including NPL ratio, provisioning coverage, and charge-off trends
+  - Net interest income and net interest margin history by reporting segment
+  - Fee income composition by product line and client segment
+  - Liquidity and funding profile including deposit mix and maturity ladder
+  - Stress-test outcomes, regulatory actions, and supervisory disclosures
+  - Credit concentration by sector, geography, and counterparty class
+  - Reserve methodology and risk disclosures from annual and interim filings
+  - Peer financial institution metrics and valuation comparables
+  - Recent earnings calls, investor decks, and regulatory filings
+
+custom_analysis_tasks:
+  - Evaluate earnings quality and sustainability across net interest and fee streams
+  - Assess underwriting discipline and credit-cycle sensitivity
+  - Analyze capital adequacy under baseline and stressed assumptions
+  - Evaluate liquidity, funding stability, and refinancing risk
+  - Assess profitability drivers including expense efficiency and operating leverage
+  - Compare valuation against peer institutions on risk-adjusted metrics
+  - Analyze regulatory and policy changes that can affect returns
+  - Build 3-year base, bull, and bear scenarios for earnings and capital ratios
+  - Identify tail risks such as credit shocks, duration mismatch, and litigation
+  - Provide an investment conclusion with key monitoring triggers
+
+use_collect_data_cache: true
+use_analysis_cache: true
+use_report_outline_cache: true
+use_full_report_cache: true
+use_post_process_cache: true

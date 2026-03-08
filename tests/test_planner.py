@@ -8,6 +8,7 @@ def test_planner_config_valid():
         target_name="Apple Inc.",
         stock_code="AAPL",
         target_type="company",
+        target_profiles=["company"],
         market="US",
         language="en",
     )
@@ -20,6 +21,7 @@ def test_planner_config_defaults():
     assert config.language == "en"
     assert config.market == ""
     assert config.custom_collect_tasks == []
+    assert config.target_profiles == []
 
 def test_planner_config_rejects_invalid_market():
     with pytest.raises(ValidationError):
@@ -32,3 +34,8 @@ def test_planner_config_rejects_invalid_language():
 def test_planner_config_rejects_invalid_type():
     with pytest.raises(ValidationError):
         PlannerConfig(target_name="Test", target_type="invalid_type")
+
+
+def test_planner_config_rejects_invalid_profile_in_target_profiles():
+    with pytest.raises(ValidationError):
+        PlannerConfig(target_name="Test", target_profiles=["unknown_type"])

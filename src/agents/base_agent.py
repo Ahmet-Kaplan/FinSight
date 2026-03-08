@@ -7,6 +7,8 @@ import dill
 import uuid
 import re
 import asyncio
+import hashlib
+import json
 from datetime import datetime
 from src.config import Config
 from src.tools import list_tools, get_tool_by_name
@@ -58,7 +60,8 @@ class BaseAgent:
         if self.enable_code:
             self.executor_path = os.path.join(self.working_dir, '.executor_cache')
             os.makedirs(self.executor_path, exist_ok=True)
-            self.code_executor = AsyncCodeExecutor(self.executor_path)
+            _lang = self.config.config.get('language', 'en') if self.config else 'en'
+            self.code_executor = AsyncCodeExecutor(self.executor_path, language=_lang)
             self.executor_state_path = os.path.join(self.executor_path, 'state.dill')
         
         self.use_llm_name = use_llm_name
@@ -75,6 +78,8 @@ class BaseAgent:
         self.current_checkpoint = {}
         self._resume_state: Dict[str, Any] | None = None
         self.current_round = 0
+        self._tool_call_counts: Dict[str, int] = {}
+        self._non_informative_tool_streak: int = 0
         
         # Initialize logger and set agent context
         self.logger = get_logger()
@@ -82,6 +87,52 @@ class BaseAgent:
     
     def _set_default_tools(self):
         return []
+
+    @staticmethod
+    def _is_effectively_empty_tool_data(data: Any) -> bool:
+        """Heuristic emptiness check for tool payloads."""
+        if data is None:
+            return True
+        if isinstance(data, str):
+            return len(data.strip()) == 0
+        if isinstance(data, (list, tuple, dict, set)):
+            return len(data) == 0
+        # pandas DataFrame / Series
+        if hasattr(data, "empty"):
+            try:
+                return bool(data.empty)
+            except Exception:
+                pass
+        # numpy arrays and similar containers
+        if hasattr(data, "size") and not isinstance(data, (str, bytes)):
+            try:
+                return int(data.size) == 0
+            except Exception:
+                pass
+        return False
+
+    def _sanitize_tool_results(self, tool_name: str, raw_results: list) -> list:
+        """Drop malformed/empty tool results before exposing to generated code."""
+        valid_results = []
+        dropped_count = 0
+        for item in raw_results:
+            if item is None:
+                dropped_count += 1
+                continue
+            if not hasattr(item, "data"):
+                dropped_count += 1
+                continue
+            data = getattr(item, "data", None)
+            if self._is_effectively_empty_tool_data(data):
+                dropped_count += 1
+                continue
+            valid_results.append(item)
+        if dropped_count > 0:
+            self.logger.warning(
+                f"Tool {tool_name} returned {dropped_count} invalid/empty result item(s); "
+                f"kept {len(valid_results)} item(s)"
+            )
+        return valid_results
 
     def _get_persist_extra_state(self) -> Dict[str, Any]:
         """Hook for subclasses to persist additional state."""
@@ -387,6 +438,20 @@ class BaseAgent:
         if self.enable_code:
             self.code_executor.set_variable("call_tool", self._agent_tool_function)
 
+    @staticmethod
+    def _tool_call_fingerprint(tool_name: str, kwargs: Dict[str, Any]) -> str:
+        """Stable hash used to block repeated identical tool calls."""
+        try:
+            payload = json.dumps(
+                {"tool_name": tool_name, "kwargs": kwargs},
+                sort_keys=True,
+                ensure_ascii=False,
+                default=str,
+            )
+        except Exception:
+            payload = f"{tool_name}|{str(kwargs)}"
+        return hashlib.sha1(payload.encode("utf-8", errors="replace")).hexdigest()
+
     async def _prepare_init_prompt(self, input_data: dict) -> list[dict]:
         raise NotImplementedError
     
@@ -422,6 +487,19 @@ class BaseAgent:
             self.memory.add_log(self.id, None, kwargs, [], error=True, note=f"No available tools for tool_name: {tool_name}")
             return []
 
+        fp = self._tool_call_fingerprint(tool_name, kwargs)
+        current_attempts = self._tool_call_counts.get(fp, 0)
+        if current_attempts >= 2:
+            note = (
+                f"Repeated tool call blocked: tool={tool_name}, "
+                f"attempt={current_attempts + 1}. Adjust params/query."
+            )
+            self.logger.warning(note)
+            self.memory.add_log(self.id, self.type, kwargs, [], error=True, note=note)
+            self._non_informative_tool_streak += 1
+            return []
+        self._tool_call_counts[fp] = current_attempts + 1
+
         bridge = get_async_bridge()
 
         # Apply rate limiting if the config provides a limiter
@@ -448,18 +526,32 @@ class BaseAgent:
                     kwargs['task'] = self.current_task_data['task']
                 response = bridge.run_async(target_tool.async_run(input_data=kwargs))
                 response = response['final_result']
+                if self._is_effectively_empty_tool_data(response):
+                    self.logger.warning(f"Tool {tool_name} returned empty result")
+                    self.memory.add_log(target_tool.id, target_tool.type, kwargs, [], error=False, note=f"Tool {target_tool.name} returned empty result")
+                    self._non_informative_tool_streak += 1
+                    return []
                 self.memory.add_log(target_tool.id, target_tool.type, kwargs, response, error=False, note=f"Tool {target_tool.name} executed successfully")
+                self._non_informative_tool_streak = 0
                 return response
             elif issubclass(type(target_tool), Tool):
                 from src.utils.tool_result_utils import safe_tool_results
                 raw_response = bridge.run_async(target_tool.api_function(**kwargs))
                 response = safe_tool_results(raw_response)
+                response = self._sanitize_tool_results(tool_name, response)
                 if not response:
                     self.logger.warning(f"Tool {tool_name} returned empty results")
                     self.memory.add_log(target_tool.id, target_tool.type, kwargs, [], error=False, note=f"Tool {target_tool.name} returned empty results")
+                    self._non_informative_tool_streak += 1
                     return []
                 sources = [item.source for item in response if hasattr(item, 'source')]
                 data_list = [item.data for item in response if hasattr(item, 'data')]
+                data_list = [item for item in data_list if not self._is_effectively_empty_tool_data(item)]
+                if not data_list:
+                    self.logger.warning(f"Tool {tool_name} returned no usable data payload")
+                    self.memory.add_log(target_tool.id, target_tool.type, kwargs, [], error=False, note=f"Tool {target_tool.name} returned no usable data payload")
+                    self._non_informative_tool_streak += 1
+                    return []
                 sources = "\n".join(sources)
                 import sys
                 display_note = f"[Tool Result Overview] Gather {len(response)} Tool Results.\n"
@@ -468,14 +560,17 @@ class BaseAgent:
                 print(f"\n\n{display_note}\n\n", file=sys.stdout, flush=True)
 
                 self.memory.add_log(target_tool.id, target_tool.type, kwargs, response, error=False, note=f"Tool {target_tool.name} executed successfully")
+                self._non_informative_tool_streak = 0
                 return data_list
             else:
                 self.logger.warning(f"Unknown tools: {tool_name}")
                 self.memory.add_log(self.id, target_tool.type, kwargs, [], error=True, note=f"Unknown tools: {tool_name}")
+                self._non_informative_tool_streak += 1
                 return []
         except Exception as e:
             self.logger.error(f"Tool {tool_name} execution failed: {e}", exc_info=True)
             self.memory.add_log(self.id, target_tool.type, kwargs, [], error=True, note=f"Tool {tool_name} executed failed: {e}")
+            self._non_informative_tool_streak += 1
             return []
     
     def _get_api_descriptions(self) -> str:
@@ -523,6 +618,11 @@ class BaseAgent:
             if state is not None:
                 conversation_history = state.get('conversation_history', [])
                 current_round = int(state.get('current_round', 0))
+                self._tool_call_counts = state.get('tool_call_counts', {}) or {}
+                try:
+                    self._non_informative_tool_streak = int(state.get('non_informative_tool_streak', 0) or 0)
+                except Exception:
+                    self._non_informative_tool_streak = 0
                 if 'return_dict' in state:
                     return state['return_dict']
             else:
@@ -531,8 +631,9 @@ class BaseAgent:
         else:
             conversation_history = await prompt_function(input_data)
             current_round = 0
-    
-        while current_round < max_iterations+1:
+
+        early_stop_noninformative = False
+        while current_round < max_iterations:
             self.logger.info(f"Iteration {current_round + 1}")
             current_round += 1
             self.current_round = current_round
@@ -559,6 +660,8 @@ class BaseAgent:
                 'current_round': current_round,
                 'input_data': input_data,
                 'stop_words': stop_words,
+                'tool_call_counts': self._tool_call_counts,
+                'non_informative_tool_streak': self._non_informative_tool_streak,
             }
             current_state.update(self._get_persist_extra_state())
             self.state = current_state
@@ -566,12 +669,40 @@ class BaseAgent:
                 state=current_state,
                 checkpoint_name=checkpoint_name,
             )
+
+            try:
+                from src.utils.recovery import write_heartbeat_entry
+                write_heartbeat_entry(
+                    working_dir=self.config.working_dir,
+                    agent_id=self.id,
+                    canonical_key=str(self.current_task_data.get('canonical_task_key', self.current_task_data.get('task', ''))),
+                    stage=str(self.current_task_data.get('stage_name', self.AGENT_NAME)),
+                    status='running',
+                    current_round=current_round,
+                    checkpoint_name=checkpoint_name,
+                )
+            except Exception:
+                pass
+
+            if (
+                input_data.get('early_stop_on_noninformative', True)
+                and self._non_informative_tool_streak >= 2
+                and action_result['continue']
+            ):
+                self.logger.info(
+                    f"Early stop after consecutive non-informative tool outputs "
+                    f"(streak={self._non_informative_tool_streak})"
+                )
+                early_stop_noninformative = True
+                break
             
             if not action_result['continue']:
                 break
         
         return_dict = {}
-        if current_round >= max_iterations and action_result['continue']:
+        if early_stop_noninformative:
+            return_dict = await self._handle_max_round(conversation_history)
+        elif current_round >= max_iterations and action_result['continue']:
             # Hit iteration limit; fall back to summary handler
             return_dict = await self._handle_max_round(conversation_history)
         else:
@@ -588,12 +719,27 @@ class BaseAgent:
             'input_data': input_data,
             'stop_words': stop_words,
             'return_dict': return_dict,
+            'tool_call_counts': self._tool_call_counts,
+            'non_informative_tool_streak': self._non_informative_tool_streak,
         }
         current_state.update(self._get_persist_extra_state())
         await self.save(
             state=current_state,
             checkpoint_name=checkpoint_name,
         )
+        try:
+            from src.utils.recovery import write_heartbeat_entry
+            write_heartbeat_entry(
+                working_dir=self.config.working_dir,
+                agent_id=self.id,
+                canonical_key=str(self.current_task_data.get('canonical_task_key', self.current_task_data.get('task', ''))),
+                stage=str(self.current_task_data.get('stage_name', self.AGENT_NAME)),
+                status='finished',
+                current_round=current_round,
+                checkpoint_name=checkpoint_name,
+            )
+        except Exception:
+            pass
         self.memory.save()
         
         return return_dict

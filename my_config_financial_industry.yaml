@@ -1,0 +1,35 @@
+profile_name: financial_industry
+target_type: financial_industry
+language: en
+reference_doc_path: src/template/report_template.docx
+outline_template_path: src/template/industry_outline.md
+
+custom_collect_tasks:
+  - Sector-level assets, liabilities, and profitability metrics across major institutions
+  - Industry capital and solvency aggregates by region and regulator
+  - Credit growth, default rates, and provisioning trends by product category
+  - Deposit, funding, and liquidity mix across the sector
+  - Fee and non-interest revenue composition trends
+  - Regulatory rule changes, supervisory guidance, and compliance timelines
+  - Digital adoption, fintech disruption metrics, and channel migration data
+  - M&A activity, strategic partnerships, and market-entry events
+  - Cross-country peer benchmarks for returns, valuation, and risk
+  - Consensus outlooks from regulators, industry bodies, and analysts
+
+custom_analysis_tasks:
+  - Assess structural profitability and return-on-capital prospects for the sector
+  - Analyze credit-cycle sensitivity and risk concentration by subsegment
+  - Evaluate capital, liquidity, and funding resilience under stress
+  - Assess regulatory burden and likely impact on growth and margins
+  - Map competitive dynamics among incumbents, challengers, and fintech entrants
+  - Analyze technology-led operating leverage and efficiency opportunities
+  - Build 3-year base, bull, and bear scenarios for sector earnings and valuation
+  - Identify leading indicators that signal turning points in sector risk
+  - Evaluate geopolitical, policy, and macro spillover risks
+  - Conclude with an investor-ready sector allocation view
+
+use_collect_data_cache: true
+use_analysis_cache: true
+use_report_outline_cache: true
+use_full_report_cache: true
+use_post_process_cache: true

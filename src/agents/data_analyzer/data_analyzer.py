@@ -20,6 +20,17 @@ class DataAnalyzer(BaseAgent):
     AGENT_DESCRIPTION = 'a agent that can analyze data and generate report'
     NECESSARY_KEYS = ['task', 'analysis_task']
 
+    @staticmethod
+    def _resolve_prompt_profile(target_type: str) -> str:
+        """Map pipeline target_type to available analyzer prompt packs."""
+        if not target_type:
+            return 'general'
+        if target_type in ('general', 'industry'):
+            return 'general'
+        if 'financial' in target_type or target_type in ('company', 'macro'):
+            return 'financial'
+        return 'general'
+
     def __init__(
         self,
         config,
@@ -45,7 +56,8 @@ class DataAnalyzer(BaseAgent):
         # Load prompts using the new YAML-based loader
         from src.utils.prompt_loader import get_prompt_loader
         target_type = self.config.config['target_type']
-        self.prompt_loader = get_prompt_loader('data_analyzer', report_type=target_type)
+        prompt_profile = self._resolve_prompt_profile(target_type)
+        self.prompt_loader = get_prompt_loader('data_analyzer', report_type=prompt_profile)
         
         # Store prompts as instance attributes for easy access
         self.DATA_ANALYSIS_PROMPT = self.prompt_loader.get_prompt('data_analysis')
@@ -110,9 +122,16 @@ class DataAnalyzer(BaseAgent):
     async def _prepare_init_prompt(self, input_data: dict) -> list[dict]:
         task = input_data['task']
         enable_chart = input_data['enable_chart']
+        handoff_bundle = input_data.get('handoff_bundle')
         collect_data_list = self.memory.get_collect_data(exclude_type=['search', 'click'])
         analysis_task = f"Global Research Objective: {task}\n\nAnalysis Task: {input_data['analysis_task']}"
         data_info = await self._format_collect_data(analysis_task, collect_data_list)
+        if handoff_bundle:
+            data_info += (
+                "\n\n## Resume Handoff Context\n"
+                "Continue from these prior findings/failed paths to avoid duplicate work:\n"
+                f"{handoff_bundle}\n"
+            )
 
         # Get target language from config
         target_language = self.config.config.get('language', 'zh')
@@ -474,20 +493,27 @@ class DataAnalyzer(BaseAgent):
 
         # 5. Warn on suspicious hardcoded numeric lists (length >= 4)
         warnings: list[str] = []
+        ast_num_cls = getattr(ast, "Num", None)  # Removed in newer Python versions.
         for node in ast.walk(tree):
             if isinstance(node, ast.List) and len(node.elts) >= 4:
-                if all(isinstance(elt, (ast.Constant, ast.Num)) for elt in node.elts):
-                    # Check if all elements are numeric
-                    all_numeric = True
-                    for elt in node.elts:
-                        if isinstance(elt, ast.Constant) and not isinstance(elt.value, (int, float)):
+                all_literal_nodes = True
+                all_numeric = True
+                for elt in node.elts:
+                    if isinstance(elt, ast.Constant):
+                        if not isinstance(elt.value, (int, float)):
                             all_numeric = False
                             break
-                    if all_numeric:
-                        warnings.append(
-                            f"Suspicious hardcoded numeric list of length {len(node.elts)} at line {node.lineno} "
-                            "— ensure data comes from the provided datasets, not fabricated values."
-                        )
+                    elif ast_num_cls is not None and isinstance(elt, ast_num_cls):
+                        # Legacy numeric literal node (older Python versions)
+                        continue
+                    else:
+                        all_literal_nodes = False
+                        break
+                if all_literal_nodes and all_numeric:
+                    warnings.append(
+                        f"Suspicious hardcoded numeric list of length {len(node.elts)} at line {node.lineno} "
+                        "— ensure data comes from the provided datasets, not fabricated values."
+                    )
 
         return True, "; ".join(warnings)
 
@@ -546,8 +572,18 @@ class DataAnalyzer(BaseAgent):
                 continue  # retry
 
             # Confirm the file exists
-            from src.utils.chart_utils import sanitize_chart_filename
-            potential_chart_name = sanitize_chart_filename(os.path.basename(chart_filenames[0]))
+            from src.utils.chart_utils import sanitize_chart_filename, contains_cjk
+            _lang = self.config.config.get('language', 'en')
+            _ascii_only = (_lang != 'zh')
+            potential_chart_name = sanitize_chart_filename(
+                os.path.basename(chart_filenames[0]), ascii_only=_ascii_only
+            )
+            # CJK guard for English runs: if LLM generated CJK in code despite instructions
+            if _lang != 'zh' and contains_cjk(action_content):
+                self.logger.warning(
+                    "CJK characters detected in chart code for English run — "
+                    "chart may contain non-English labels"
+                )
             chart_filepath = os.path.join(self.image_save_dir, potential_chart_name) 
 
             if not os.path.exists(chart_filepath):
@@ -578,6 +614,8 @@ class DataAnalyzer(BaseAgent):
         enable_chart: bool = True,
         # stop_words: list[str] = ["</execute>", "</report>"]
     ) -> dict:
+        input_data = dict(input_data)
+        input_data['max_iterations'] = max_iterations
         input_data['enable_chart'] = enable_chart
         self.enable_chart = enable_chart
 

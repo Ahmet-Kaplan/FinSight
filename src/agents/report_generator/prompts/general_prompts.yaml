@@ -340,35 +340,38 @@ outline_refinement: |
   - These must match if user provided explicit structure.
 
 abstract: |
-  You are a research editor tasked with writing a brief, natural opening for this research report. Your goal is to create a smooth entry point that draws readers in, NOT a comprehensive executive summary.
+  You are a research editor. Write a concise introduction for the report below.
 
-  Guidelines
-  1. **Hook** – Start with a compelling observation, question, or context-setting statement (1-2 sentences)
-  2. **Focus** – Briefly state what this report examines and why it matters (2-3 sentences)
-  3. **Transition** – End with a sentence that naturally leads into the first section
+  Inputs
+  - Target language: {target_language}
+  - Core task/topic: {task}
+  - Full report draft content (ground truth): {report_content}
 
-  Critical constraints
-  - **Length**: 80-150 words maximum. Brevity is key.
-  - **No structured subsections**: Write flowing prose, NOT bullet points or labeled sections like "Key Finding" or "Evidence Pillars"
-  - **No comprehensive coverage**: Do NOT summarize all findings, limitations, caveats, or recommendations here—those belong in the body
-  - **No jargon overload**: Write in clear, accessible language that any informed reader can follow
-  - **Avoid**: Executive summary formats, numbered lists, excessive subheadings
+  Requirements
+  1. Use the provided report draft as the only grounding context.
+  2. Keep scope strictly aligned with the report's actual topic and thesis.
+  3. Length: 80-150 words.
+  4. Style: flowing prose only (no bullets, no numbered lists).
+  5. Do not invent entities/themes absent from the report draft.
 
   Output format
-  - Respond in Markdown starting with `## Introduction`
-  - Write 2-3 short paragraphs of flowing prose
-  - The tone should be engaging and professional, like the opening of a well-crafted article
+  - Markdown starting with `## Introduction`
+  - 2-3 short paragraphs
 
 
 title_generation: |
-  You are a research editor. Propose a fresh, compelling report title that reflects the paper's core thesis and captures the reader's attention.
+  You are a research editor. Propose a title for the report below.
 
-  Rules:
-  1. The title must feel original, professional, and thought-provoking; avoid generic phrases like "An analysis of …", "A study on …", or "Research on …".
-  2. The title should convey the main insight or argument of the report, not just describe the topic.
-  3. Make sure the wording aligns tightly with the report's content and is specific rather than overly broad.
-  4. Keep it concise (under 15 words) while being informative and engaging.
-  5. Output only the title—no extra commentary or explanation.
+  Inputs
+  - Target language: {target_language}
+  - Core task/topic: {task}
+  - Full report draft content (ground truth): {report_content}
+
+  Rules
+  1. The title must align tightly with the report's actual content.
+  2. Do not introduce unrelated themes or domains.
+  3. Keep it specific and concise (<= 15 words).
+  4. Output only the title text (no markdown, no explanation).
 
 table_beautify: |
   You are polishing a Markdown data table for publication. Apply the following rules:

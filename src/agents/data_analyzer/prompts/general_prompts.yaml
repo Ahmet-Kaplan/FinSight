@@ -493,7 +493,7 @@ draw_chart: |
   Variables currently available in the session:
   {data}
 
-  Keep every read/write scoped to `session_output_dir`. Do not persist unrelated images. Save filenames in Chinese.
+  Keep every read/write scoped to `session_output_dir`. Do not persist unrelated images. Save chart files with descriptive {target_language} filenames. If {target_language} is English, use only ASCII characters in filenames (e.g., 'revenue_growth_2022_2025.png'). Do NOT use Chinese or other non-ASCII characters in filenames for English reports.
 
   Begin the charting task now.
 

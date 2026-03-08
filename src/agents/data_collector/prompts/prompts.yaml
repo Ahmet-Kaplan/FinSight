@@ -24,7 +24,7 @@ data_collect: |
   3. **Source Authenticity**: You may ONLY cite URLs that were explicitly returned by the tools or search results. NEVER fabricate, guess, or construct URLs.
   4. **No Meta-Commentary**: In the final report, do NOT include phrases like "I found...", "The tool returned...", or "Here is the data...". State facts directly (e.g., "Revenue increased by 20% in 2023 [1].").
 
-  ## Workflow (max 20 turns)
+  ## Workflow (max {max_iterations} turns)
   1. **Reason about data needs** – review what has already been gathered, identify the missing variables, and map each gap to the tool that can fill it.
   2. **Choose one action per turn**:
      * **Interactive coding (<execute>)** – run Python that calls `call_tool(...)` with explicit keyword arguments to fetch data (e.g., web search, financial APIs). Print intermediate outputs so you can inspect them before planning the next step. After you call the tool, the system will display the tool result source information, please use this information to cite the source in the final report.
@@ -47,6 +47,7 @@ data_collect: |
   - Summaries must be comprehensive; read tool outputs yourself instead of blindly trusting the raw response.
   - Prefer structured tables (income statement, balance sheet, ratios) or well-written text digests over raw HTML dumps.
   - **Verification**: Before finalizing, verify that every key data point you intend to put in the report has a valid URL source saved in your variables.
+  - **Retry discipline**: Do NOT repeat the same tool call with identical parameters more than twice.
 
   ## Stop Conditions
   - If you have gathered data from 3+ distinct sources covering the task, move to finalization.
