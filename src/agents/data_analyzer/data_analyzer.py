@@ -220,15 +220,6 @@ class DataAnalyzer(BaseAgent):
             formatted_data += f"Data (id:{idx}):\n{item.brief_str()}\n\n"
         return formatted_data
     
-    async def _handle_report_action(self, action_content: str):
-        """Handle a 'final' action from the LLM."""
-        return {
-            "action": "final_report",
-            "action_content": action_content,
-            "result": action_content,
-            "continue": False,
-        }
-    
     async def _handle_max_round(self, conversation_history):
         conversation_history = [item["content"] for item in conversation_history]
         analysis_info = "\n\n".join(conversation_history)
@@ -638,12 +629,11 @@ class AnalysisResult:
         # Replace placeholders with descriptive captions
         content = self._replace_image_name()[1]
         return f"Report Title: {self.title}\nReport Content: {content[:300]}...(more content available)\n\n"
-    
+
     def _replace_image_name(self):
         image_name_list = []
         report_content = self.content
         img_list = re.findall("@import \"(.*?)\"", self.content)
-        # Note: AnalysisResult is not an agent and has no logger; use prints or another mechanism if logging is needed.
 
         for img in img_list:
             if img in self.chart_name_description_mapping:
@@ -654,6 +644,6 @@ class AnalysisResult:
                 )
                 image_name_list.append(new_img)
         return image_name_list, report_content
-    
+
     def get_all_img(self):
         return self._replace_image_name()[0]

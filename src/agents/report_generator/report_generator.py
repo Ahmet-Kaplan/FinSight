@@ -313,32 +313,6 @@ class ReportGenerator(BaseAgent):
             'continue': True,
         }
     
-    async def _handle_report_action(self, action_content: str):
-        """Handle a 'final/report' action."""
-        return {
-            "action": "report",
-            "action_content": action_content,
-            "result": action_content,
-            "continue": False,
-        }
-    async def _handle_outline_action(self, action_content: str):
-        """Handle a 'outline' action."""
-        return {
-            "action": "outline",
-            "action_content": action_content,
-            "result": action_content,
-            "continue": False,
-        }
-    
-    async def _handle_draft_action(self, action_content: str):
-        """Handle a 'outline' action."""
-        return {
-            "action": "draft",
-            "action_content": action_content,
-            "result": action_content,
-            "continue": False,
-        }
-    
     async def _final_polish(self, section_input_data, draft_section: str):
         all_analysis_result = self._get_analysis_results()
         all_image_list = []
@@ -676,6 +650,132 @@ class ReportGenerator(BaseAgent):
         new_section = Section(ref_title, reference_str)
         new_section.set_content(reference_str)
         report.sections.append(new_section)
+        return report
+
+
+    async def post_process_report(self, input_data, report):
+        """
+        Post-process the report while saving progress between sub-stages:
+          0: replace image paths
+          1: add abstract and title
+          2: add cover/basic data page
+          3: add reference data section
+          4: render to docx
+        """
+        current_state = {
+            'phase': 'post_process',
+            'post_stage': self._post_stage,
+            'report_obj': report,
+        }
+        # 0 Replace image paths
+        if self._post_stage <= 0:
+            self.logger.info("[Phase2] Step 0: replace image paths")
+            report = await self._replace_image_path(report)
+            self._post_stage = 1
+            current_state['report_obj_stage1'] = copy.deepcopy(report)
+            current_state['report_obj'] = report
+            current_state['post_stage'] = self._post_stage
+            await self.save(state=current_state, checkpoint_name='report_latest.pkl')
+            self.logger.info("[Phase2] Step 0 done, checkpoint saved")
+
+        # 1 Add abstract/title (conditional based on add_introduction setting)
+        if self._post_stage <= 1:
+            if getattr(self, 'add_introduction', True):
+                self.logger.info("[Phase2] Step 1: add abstract and title")
+                report = await self._add_abstract(input_data, report)
+            else:
+                self.logger.info("[Phase2] Step 1: skipping abstract/introduction (add_introduction=False for general reports)")
+                # Still generate a better title
+                new_title = await self.llm.generate(
+                    messages = [
+                    {
+                        'role': 'user',
+                        'content': self.TITLE_PROMPT.format(target_language=self.target_language_name, report_content=report.content)
+                    }
+                ])
+                new_title = new_title.replace("#","").strip()
+                report._content = f"# {new_title}\n\n"
+            self._post_stage = 2
+            current_state['report_obj_stage2'] = copy.deepcopy(report)
+            current_state['report_obj'] = report
+            current_state['post_stage'] = self._post_stage
+            await self.save(state=current_state, checkpoint_name='report_latest.pkl')
+            self.logger.info("[Phase2] Step 1 done, checkpoint saved")
+
+        # 2 Add cover/basic data page
+        if self._post_stage <= 2:
+            self.logger.info("[Phase2] Step 2: add cover/basic data page")
+            report = await self._add_cover_page(input_data, report)
+            self._post_stage = 3
+            current_state['report_obj_stage3'] = copy.deepcopy(report)
+            current_state['report_obj'] = report
+            current_state['post_stage'] = self._post_stage
+            await self.save(state=current_state, checkpoint_name='report_latest.pkl')
+            self.logger.info("[Phase2] Step 2 done, checkpoint saved")
+
+        # 3 Add references (conditional based on add_reference_section setting)
+        if self._post_stage <= 3:
+            if getattr(self, 'add_reference_section', True):
+                self.logger.info("[Phase2] Step 3: add references")
+                report = await self._add_reference(report)
+            else:
+                self.logger.info("[Phase2] Step 3: skipping reference section (add_reference_section=False)")
+            self._post_stage = 4
+            current_state['report_obj_stage4'] = copy.deepcopy(report)
+            current_state['report_obj'] = report
+            current_state['post_stage'] = self._post_stage
+            await self.save(state=current_state, checkpoint_name='report_latest.pkl')
+            self.logger.info("[Phase2] Step 3 done, checkpoint saved")
+
+        # 4 Render to docx
+        if self._post_stage <= 4:
+            self.logger.info("[Phase2] Step 4: render report to docx")
+            working_dir = self.config.config['working_dir']
+            md_path = os.path.join(working_dir, f'{report.title}.md')
+            docx_path = os.path.join(working_dir, f'{report.title}.docx')
+            content = report.content
+            content = content.replace("```markdown", "").replace("```", "")
+            with open(md_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            media_dir = os.path.join(working_dir, "media")
+            reference_doc = self.config.config['reference_doc_path']
+            pandoc_cmd = [
+                "pandoc",
+                md_path,
+                "-o",
+                docx_path,
+                "--standalone",
+                "--toc",
+                "--toc-depth=3",
+                f"--resource-path={working_dir}",
+                f"--reference-doc={reference_doc}"
+            ]
+            if os.path.exists(media_dir):
+                pandoc_cmd.append(f"--extract-media={media_dir}")
+            self.logger.info("Pandoc command: %s", " ".join(pandoc_cmd))
+            env = os.environ.copy()
+            env['PYTHONIOENCODING'] = 'utf-8'
+            subprocess.run(pandoc_cmd, check=True, capture_output=True, text=True, encoding='utf-8', env=env)
+            
+            # Validate output is non-empty
+            if not os.path.exists(md_path) or os.path.getsize(md_path) == 0:
+                self.logger.error(
+                    f"Report output is empty: {md_path}. "
+                    "This usually means sections produced no content. "
+                    "Check section generation logs for errors."
+                )
+
+            pdf_path = docx_path.replace(".docx", ".pdf")
+            try:
+                docx2pdf.convert(docx_path, pdf_path)
+            except Exception as e:
+                self.logger.error(f"Failed to convert docx to pdf: {e}", exc_info=True)
+            self._post_stage = 5
+            current_state['rendered_md'] = md_path
+            current_state['rendered_docx'] = docx_path
+            current_state['finished'] = True
+            await self.save(state=current_state, checkpoint_name='report_latest.pkl')
+            self.logger.info(f"[Phase2] Step 4 done, rendered files: md={md_path}, docx={docx_path}, pdf={pdf_path}")
         return report
 
     def _get_persist_extra_state(self) -> Dict[str, Any]:

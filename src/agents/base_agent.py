@@ -1,6 +1,5 @@
 """Base agent with save/load/run capabilities."""
 from typing import Dict, Any, Union, Optional, Type
-import sys
 import os
 import pickle
 import dill
@@ -59,7 +58,10 @@ class BaseAgent:
         if self.enable_code:
             self.executor_path = os.path.join(self.working_dir, '.executor_cache')
             os.makedirs(self.executor_path, exist_ok=True)
-            self.code_executor = AsyncCodeExecutor(self.executor_path)
+            self.code_executor = AsyncCodeExecutor(
+                working_dir=self.executor_path,
+                allowed_write_dir=self.working_dir,
+            )
             self.executor_state_path = os.path.join(self.executor_path, 'state.dill')
         
         self.use_llm_name = use_llm_name
@@ -656,6 +658,16 @@ class BaseAgent:
     async def _handle_max_round(self, conversation_history):
         return {'conversation_history': conversation_history, 'final_result': conversation_history[-1]['content']}
 
+    # Canonical tag aliases: map legacy/alternative tags to the two
+    # supported action types ("code" and "final").
+    _TAG_ALIASES = {
+        'execute': 'code',
+        'final_result': 'final',
+        'report': 'final',
+        'outline': 'final',
+        'draft': 'final',
+    }
+
     def _parse_llm_response(self, response: str) -> tuple[str, str]:
         """Parse the LLM response to extract action tags."""
         response = response.replace("<thinking>", "\n").replace("</thinking>", "\n")
@@ -668,11 +680,8 @@ class BaseAgent:
         match = matches[-1]
 
         tag_name = match.group(1)
-        if tag_name == 'execute':
-            tag_name = 'code'
-        if tag_name == 'final_result':
-            tag_name = 'final'
-        content_string = match.group(2).strip()  # Remove surrounding whitespace
+        tag_name = self._TAG_ALIASES.get(tag_name, tag_name)
+        content_string = match.group(2).strip()
 
         return tag_name, content_string
 

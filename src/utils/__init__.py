@@ -15,9 +15,8 @@ def __getattr__(name: str):
 __all__ = [
     "LLM",
     "AsyncLLM",
-    "CodeExecutor",
     "AsyncCodeExecutor",
     "IndexBuilder",
     "get_logger",
-    "setup_logger"
+    "setup_logger",
 ]

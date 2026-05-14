@@ -1,7 +1,10 @@
+import logging
 import re
 import json
 from typing import Dict, List, Tuple, Any, Union
 from collections import OrderedDict
+
+logger = logging.getLogger(__name__)
 
 class Report:
     def __init__(self, report_outline: str):
