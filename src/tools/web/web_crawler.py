@@ -14,9 +14,18 @@ from io import BytesIO
 import pdfplumber
 import chardet
 
-from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+import os
+
+try:
+    from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+    _HAS_CRAWL4AI = True
+except ImportError:
+    _HAS_CRAWL4AI = False
+
 from openai import OpenAI
 from bs4 import BeautifulSoup
+
+_JINA_API_KEY = os.getenv("JINA_API_KEY", "")
 
 from ..base import Tool, ToolResult
 
@@ -73,6 +82,24 @@ class Click(Tool):
         except Exception as e:
             return f"Error fetching url: {str(e)}"
 
+    async def fetch_url_jina(self, url: str) -> str:
+        """Fetch clean Markdown content via Jina Reader API."""
+        jina_url = f"https://r.jina.ai/{url}"
+        headers = {
+            "Accept": "text/markdown",
+            "X-Return-Format": "markdown",
+        }
+        if _JINA_API_KEY:
+            headers["Authorization"] = f"Bearer {_JINA_API_KEY}"
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(jina_url, headers=headers, timeout=30)
+                if response.status_code != 200:
+                    return ""
+                return response.text
+        except Exception:
+            return ""
+
     async def api_function(self, urls: List[str], task: str) -> List[ToolResult]:
         """
         Crawl each URL and return the retrieved content (up to 10,000 chars).
@@ -87,21 +114,24 @@ class Click(Tool):
         if isinstance(urls, str):
             urls = [urls]
         try:
-            browser_conf = BrowserConfig(headless=True)  # or False to see the browser
-            run_conf = CrawlerRunConfig(
-                cache_mode=CacheMode.BYPASS
-            )
             result_list = []
             for url in urls:
                 if url.endswith(".pdf"):
                     content = await self.extract_pdf_text_async(url)
-                else:
+                elif _HAS_CRAWL4AI:
+                    browser_conf = BrowserConfig(headless=True)
+                    run_conf = CrawlerRunConfig(
+                        cache_mode=CacheMode.BYPASS
+                    )
                     async with AsyncWebCrawler(config=browser_conf) as crawler:
                         result = await crawler.arun(url=url, config=run_conf)
                         content = str(result.markdown)
-                    
-                    # use naive requests with async to get the content
-                    # content = await self.fetch_url(url)
+                else:
+                    # Use Jina Reader API when crawl4ai is unavailable
+                    content = await self.fetch_url_jina(url)
+                    if not content:
+                        # Fallback: plain HTTP fetch
+                        content = await self.fetch_url(url)
 
                 # if task == '' or len(content) < 10000:
                 result_list.append(

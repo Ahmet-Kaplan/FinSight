@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Tuple
 import asyncio
 from src.agents.base_agent import BaseAgent
-from src.agents import DeepSearchAgent
+from src.agents.search_agent.search_agent import DeepSearchAgent
 from src.tools import ToolResult, get_tool_categories, get_tool_by_name
 
 
@@ -12,47 +12,54 @@ class DataCollector(BaseAgent):
     def __init__(
         self,
         config,
-        tools = [],
+        tools = None,
         use_llm_name: str = "deepseek-chat",
         enable_code = True,
         memory = None,
-        agent_id: str = None
+        agent_id: str = None,
+        task_context = None,
+        tool_categories: list[str] | None = None,
     ):
+        self._tool_categories = tool_categories
         super().__init__(
             config=config,
             tools=tools,
             use_llm_name=use_llm_name,
             enable_code=enable_code,
             memory=memory,
-            agent_id=agent_id
+            agent_id=agent_id,
+            task_context=task_context,
         )
-        # Load prompts using the new YAML-based loader
+        # Load prompts using the YAML-based loader with correct report type
         from src.utils.prompt_loader import get_prompt_loader
-        
-        self.prompt_loader = get_prompt_loader('data_collector', report_type='general')
+        target_type = self.config.config.get('target_type', 'general')
+        self.prompt_loader = get_prompt_loader('data_collector', report_type=target_type)
         self.DATA_COLLECT_PROMPT = self.prompt_loader.get_prompt('data_collect')
         
         self.collected_data_list: List[ToolResult] = []
-        if self.tools == []:
-            self._set_default_tools()
         
 
     def _set_default_tools(self):
         """
         Attach default tools (search agent + API wrappers).
+        Uses ``self._tool_categories`` to filter which API categories to load.
+        If not set, loads all categories except 'web'.
         """
         tool_list = []
-        # Include the deep-search agent (sharing the same memory)
-        tool_list.append(DeepSearchAgent(config=self.config, use_llm_name=self.use_llm_name, memory=self.memory))
-        # Attach other API tools
+        tool_list.append(DeepSearchAgent(
+            config=self.config, use_llm_name=self.use_llm_name,
+            task_context=self.task_context,
+        ))
+        # Determine which API categories to load
+        categories = self._tool_categories
+        if categories is None:
+            categories = [k for k in get_tool_categories() if k != 'web']
         for tool_type, tool_name_list in get_tool_categories().items():
-            if tool_type == 'web':
+            if tool_type not in categories:
                 continue
             for tool_name in tool_name_list:
                 tool_instance = get_tool_by_name(tool_name)()
                 tool_list.append(tool_instance)
-        for tool in tool_list:
-            self.memory.add_dependency(tool.id, self.id)
         self.tools = tool_list
         try:
             self.logger.info(f"Initialized default tools: total {len(tool_list)} items")
@@ -67,18 +74,14 @@ class DataCollector(BaseAgent):
 
     def _save_result(self, var: Any, result_name: str, result_description: str, data_source: str):
         """Persist execution results into self.collected_data_list."""
-        self.memory.add_data(ToolResult(
+        item = ToolResult(
             name=result_name,
             description=result_description,
             data=var,
-            source=data_source
-        ))
-        self.collected_data_list.append(ToolResult(
-            name=result_name,
-            description=result_description,
-            data=var,
-            source=data_source
-        ))
+            source=data_source,
+        )
+        self.collected_data_list.append(item)
+        self.task_context.put("collected_data", item)
         try:
             self.logger.info(f"Saved collect result: {result_name} (source={data_source})")
         except Exception:
@@ -89,13 +92,7 @@ class DataCollector(BaseAgent):
         if not task:
             raise ValueError("Input data must contain a 'task' key.")
         
-        # Get target language from config
-        target_language = self.config.config.get('language', 'zh')
-        language_mapping = {
-            'zh': 'Chinese (中文)',
-            'en': 'English'
-        }
-        target_language_name = language_mapping.get(target_language, target_language)
+        target_language_name = self._get_language_display_name()
         
         # Extract research target from task
         target_name = self.config.config.get('target_name', '')
@@ -122,7 +119,6 @@ class DataCollector(BaseAgent):
         echo=False,
         resume: bool = True,
         checkpoint_name: str = 'latest.pkl',
-        # stop_words: list[str] = ["</execute>", "</final_result>"]
     ) -> dict:
         # Reset collected-data cache for each run
         self.collected_data_list = []
@@ -137,19 +133,8 @@ class DataCollector(BaseAgent):
             checkpoint_name=checkpoint_name,
         )
         run_result['collected_data_list'] = self.collected_data_list
-        for item in self.collected_data_list:
-            self.memory.add_data(item)
-        self.logger.info(f"Successfully save {len(self.collected_data_list)} items to memory")
-        self.memory.add_log(
-            id=self.id,
-            type=self.type,
-            input_data=input_data,
-            output_data=self.collected_data_list,
-            error=False,
-            note=f"DataCollector finished: collected={len(self.collected_data_list)} items"
-        )
+        # Note: data is already persisted in _save_result() during execution.
         self.logger.info(f"DataCollector finished: collected={len(self.collected_data_list)} items")
-        self.memory.save()
         return run_result
 
     def _get_persist_extra_state(self) -> Dict[str, Any]:
@@ -159,3 +144,9 @@ class DataCollector(BaseAgent):
 
     def _load_persist_extra_state(self, state: Dict[str, Any]):
         self.collected_data_list = state.get('collected_data_list', [])
+
+    def _repopulate_task_context(self) -> None:
+        """Re-push collected data into task_context after checkpoint restore."""
+        if self.task_context is not None:
+            for item in self.collected_data_list:
+                self.task_context.put("collected_data", item)

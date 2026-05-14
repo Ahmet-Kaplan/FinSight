@@ -93,9 +93,9 @@ FinSight is still under development and there are many issues and room for impro
 - [x] VLM-powered chart generation + critique loops for clean visuals
 - [x] Checkpoint/resume for long-running tasks
 - [x] Interactive web demo (frontend + backend)
-- [ ] General-purpose research adaptation beyond finance
+- [x] General-purpose research adaptation beyond finance (general & governance plugins)
 - [x] Multi-market support (US equity + macro via yfinance/FRED)
-- [ ] Plugin system for custom tools and agents
+- [x] Plugin system for custom report types and prompt customization
 - [x] Code execution sandbox hardening (timeouts, restricted imports)
 - [x] Rate limiter for API calls
 - [x] CI/CD pipeline (GitHub Actions)
@@ -225,16 +225,16 @@ Full sample reports live in `assets/example_reports`.
   <img src="assets/architecture.jpg" alt="FinSight Architecture" width="800"/>
 </p>
 
-FinSight is a multi-stage, memory-centric pipeline: Data Collection → Analysis + VLM chart refinement → Report drafting & polishing → Rendering. Each agent runs in a shared variable space with resumable checkpoints.
+FinSight is a multi-stage, DAG-driven pipeline: Data Collection → Analysis + VLM chart refinement → Report drafting & polishing → Rendering. A central **Pipeline** orchestrator schedules agents concurrently via a task graph with hard/soft dependencies, while a thread-safe **TaskContext** serves as the shared data bus. Resumable checkpoints (JSON for pipeline state, dill for agent state) allow long-running jobs to survive interruptions.
 
 **Agent roster**
 
 | Agent | Purpose | Key inputs | Outputs | Default tools/skills |
 |-------|---------|------------|---------|----------------------|
-| 📥 Data Collector | Route and gather structured/unstructured data | Task, ticker/market, custom tasks | Normalized datasets in memory | DeepSearch Agent; all financial/macro/industry tools |
-| 🔍 Deep Search Agent | Multi-hop web search + content fetch with source validation | Task, query | Search snippets + crawled pages with citations | Serper/Google search; web page fetcher |
+| 📥 Data Collector | Route and gather structured/unstructured data | Task, ticker/market, custom tasks | Normalized datasets in TaskContext | DeepSearch Agent; all financial/macro/industry tools |
+| 🔍 Deep Search Agent | Multi-hop web search + content fetch with source validation | Task, query | Search snippets + crawled pages with citations | Exa search (free, no key); web page fetcher |
 | 🔬 Data Analyzer | Code-first analysis, charting, VLM critique | Task, analysis task, collected data | Analysis report, charts + captions | DeepSearch Agent; custom palette injection |
-| 📝 Report Generator | Outline → sections → polish → cover/reference → DOCX/PDF | Task, outlines, analysis/memory | Publication-ready report (MD/DOCX/PDF) | DeepSearch Agent; Pandoc + docx2pdf pipeline |
+| 📝 Report Generator | Outline → sections → polish → cover/reference → DOCX/PDF | Task, outlines, analysis results | Publication-ready report (MD/DOCX/PDF) | DeepSearch Agent; Pandoc + docx2pdf pipeline |
 
 **Tool library (high-level)**
 
@@ -270,7 +270,7 @@ FinSight is a multi-stage, memory-centric pipeline: Data Collection → Analysis
 | Consumer confidence index | Industry | Data API | Sentiment series |
 | Total retail sales of consumer goods | Industry | Data API | Retail sales + YoY/MoM |
 | Bing web search (requests) | Web | Search | HTML-based Bing search |
-| Google Search Engine (Serper) | Web | Search | API Google search |
+| Exa Search Engine (MCP) | Web | Search | Free AI-powered web search (no API key needed) |
 | Bocha web search | Web | Search | CN-focused search API |
 | DuckDuckGo / Sogou search | Web | Search | Alternative HTML searches |
 | Financial site in-domain search (requests/playwright) | Web | Search | Scoped finance domains |
@@ -308,9 +308,11 @@ EMBEDDING_MODEL_NAME="text-embedding-v3"
 EMBEDDING_API_KEY="sk-your-key"
 EMBEDDING_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-# Web Search (Optional)
-SERPER_API_KEY="your-serper-key"      # Google Search via Serper
-BOCHAAI_API_KEY="your-bocha-key"      # Bocha Search (Chinese-focused)
+# Web Search
+# Default: Exa Search via MCP (free, no API key needed — works out of the box)
+# Optional alternatives:
+# SERPER_API_KEY="your-serper-key"    # Google Search via Serper (paid)
+# BOCHAAI_API_KEY="your-bocha-key"    # Bocha Search (Chinese-focused)
 ```
 
 ### Using Aggregator Endpoints
@@ -407,33 +409,46 @@ llm_config_list:
 <details>
 <summary><b>✏️ Prompt System & Customization</b></summary>
 
-### Prompt Directory Structure
+### Prompt Directory Structure (v2.0 Layered Resolution)
+
+Prompts are resolved in a three-layer fallback: **Plugin → _base/ → Agent defaults**.
 
 ```
-src/agents/
-├── data_analyzer/prompts/
-│   ├── general_prompts.yaml      # For general research
-│   └── financial_prompts.yaml    # For financial reports
-├── report_generator/prompts/
-│   ├── general_prompts.yaml
-│   ├── financial_company_prompts.yaml
-│   ├── financial_macro_prompts.yaml
-│   └── financial_industry_prompts.yaml
-├── data_collector/prompts/
-│   └── prompts.yaml
-└── search_agent/prompts/
-    └── general_prompts.yaml
+src/
+├── prompts/_base/               # Shared base prompts (lowest priority)
+│   ├── data_api.yaml
+│   ├── outline_critique.yaml
+│   ├── outline_refinement.yaml
+│   ├── select_analysis.yaml
+│   ├── select_data.yaml
+│   ├── table_beautify.yaml
+│   └── vlm_critique.yaml
+├── plugins/                     # Plugin-specific overrides (highest priority)
+│   ├── financial_company/prompts/
+│   │   ├── data_analyzer.yaml
+│   │   ├── memory.yaml
+│   │   └── report_generator.yaml
+│   ├── financial_industry/prompts/
+│   ├── financial_macro/prompts/
+│   ├── general/prompts/
+│   └── governance/prompts/
+└── agents/                      # Agent-level fallback defaults
+    ├── data_collector/prompts/
+    └── search_agent/prompts/
 ```
 
 ### Using the Prompt Loader
 
 ```python
-from src.utils.prompt_loader import get_prompt_loader
+from src.utils.prompt_loader import PromptLoader
 
-# Load prompts for an agent
-loader = get_prompt_loader('data_analyzer', report_type='financial')
+# New layered loader: plugin → _base/ → agent fallback
+loader = PromptLoader.create_loader(
+    agent_name='data_analyzer',
+    plugin_name='financial_company',
+)
 
-# Get a specific prompt
+# Get a specific prompt (format variables are auto-merged with plugin defaults)
 prompt = loader.get_prompt('data_analysis',
     current_time="2024-12-01",
     user_query="Analyze revenue trends",
@@ -443,11 +458,26 @@ prompt = loader.get_prompt('data_analysis',
 
 # List all available prompts
 print(loader.list_available_prompts())
+
+# Backward-compatible convenience function
+from src.utils.prompt_loader import get_prompt_loader
+loader = get_prompt_loader('data_analyzer', report_type='financial_company')
 ```
 
 ### Creating Custom Prompts
 
-1. Create `src/agents/data_analyzer/prompts/my_custom_prompts.yaml`:
+Prompts are resolved via a 3-layer fallback: plugin overrides → shared `_base/` → agent defaults.
+
+1. **Plugin-level override** (highest priority): Create a YAML file in your plugin's `prompts/` directory:
+   ```
+   src/plugins/my_custom/prompts/data_analyzer.yaml
+   ```
+   
+2. **Shared base**: Add to `src/prompts/_base/<prompt_key>.yaml` for prompts shared across plugins.
+
+3. **Agent fallback** (lowest priority): Place in `src/agents/<agent_name>/prompts/`.
+
+Example plugin prompt override (`src/plugins/my_custom/prompts/data_analyzer.yaml`):
 
 ```yaml
 data_analysis: |
@@ -464,7 +494,7 @@ data_analysis: |
   All output must be in {target_language}.
 ```
 
-2. Set `target_type: 'my_custom'` in config to load your prompts.
+Register your plugin in `src/plugins/my_custom/plugin.py` and set `target_type: 'my_custom'` in config.
 
 ### Key Prompt Variables
 
@@ -715,10 +745,11 @@ class MyCustomAgent(BaseAgent):
     NECESSARY_KEYS = ['task', 'custom_param']
     
     def __init__(self, config, tools=None, use_llm_name="deepseek-chat",
-                 enable_code=True, memory=None, agent_id=None):
+                 enable_code=True, task_context=None, agent_id=None):
         if tools is None:
             tools = self._get_default_tools()
-        super().__init__(config, tools, use_llm_name, enable_code, memory, agent_id)
+        super().__init__(config, tools, use_llm_name, enable_code,
+                         task_context=task_context, agent_id=agent_id)
         
         # Load prompts
         from src.utils.prompt_loader import get_prompt_loader
@@ -746,8 +777,8 @@ class MyCustomAgent(BaseAgent):
 class ParentAgent(BaseAgent):
     def _set_default_tools(self):
         self.tools = [
-            MyCustomAgent(config=self.config, memory=self.memory),
-            DeepSearchAgent(config=self.config, memory=self.memory),
+            MyCustomAgent(config=self.config, task_context=self.task_context),
+            DeepSearchAgent(config=self.config, task_context=self.task_context),
         ]
 ```
 
@@ -773,53 +804,45 @@ await self.save(
 
 ```
 outputs/<target_name>/
-├── memory/
-│   └── memory.pkl           # Global memory state
+├── checkpoints/
+│   ├── pipeline.json         # Pipeline DAG state + TaskContext (human-readable)
+│   └── agents/               # Per-agent dill checkpoints
+│       ├── collect_0/
+│       ├── analyze_0/
+│       └── report/
 ├── agent_working/
 │   ├── agent_data_collector_xxx/
-│   │   └── .cache/latest.pkl
 │   ├── agent_data_analyzer_xxx/
-│   │   ├── .cache/latest.pkl
-│   │   ├── .cache/charts.pkl
-│   │   └── images/
 │   └── agent_report_generator_xxx/
-│       └── .cache/
-│           ├── outline_latest.pkl
-│           ├── section_0.pkl
-│           └── report_latest.pkl
 └── logs/
 ```
 
 ### Controlling Resume
 
-```python
+```bash
 # Resume from checkpoints (default)
-asyncio.run(run_report(resume=True))
+python run_report.py --config my_config.yaml
 
 # Fresh start (ignores checkpoints)
-asyncio.run(run_report(resume=False))
+python run_report.py --config my_config.yaml --no-resume
+
+# Inspect DAG without executing
+python run_report.py --config my_config.yaml --dry-run
 ```
 
-### Memory Data Flow
+### TaskContext Data Flow
 
 ```python
-from src.memory import Memory
+from src.core.task_context import TaskContext
 
-memory = Memory(config=config)
-memory.load()  # Load from checkpoint
+ctx = TaskContext.from_config(config)
 
-# Access collected data
-data_list = memory.get_collect_data()
+# Agents write artifacts via put()
+ctx.put("collected_data", tool_result)
 
-# Access analysis results
-analyses = memory.get_analysis_result()
-
-# Semantic search
-relevant = await memory.retrieve_relevant_data(
-    query="revenue trends",
-    top_k=10,
-    embedding_model="text-embedding-v3"
-)
+# Read artifacts
+data_list = ctx.get("collected_data")      # List[ToolResult]
+analyses = ctx.get("analysis_results")     # List[AnalysisResult]
 ```
 
 </details>
@@ -827,19 +850,16 @@ relevant = await memory.retrieve_relevant_data(
 <details>
 <summary><b>📚 Complete Code Examples</b></summary>
 
-### Example 1: Custom Company Analysis
+### Example 1: Full Pipeline (Recommended)
 
 ```python
 import asyncio
-import os
-from dotenv import load_dotenv
-load_dotenv()
-
 from src.config import Config
-from src.memory import Memory
-from src.agents import DataCollector, DataAnalyzer, ReportGenerator
+from src.core.pipeline import Pipeline
+from src.core.task_context import TaskContext
+from src.plugins import load_plugin
 
-async def analyze_company():
+async def run():
     config = Config(
         config_file_path='my_config.yaml',
         config_dict={
@@ -849,73 +869,44 @@ async def analyze_company():
             'language': 'en',
         }
     )
-    
-    memory = Memory(config=config)
-    
-    # Run analysis
-    analyzer = DataAnalyzer(
-        config=config, memory=memory,
-        use_llm_name=os.getenv("DS_MODEL_NAME"),
-        use_vlm_name=os.getenv("VLM_MODEL_NAME"),
-        use_embedding_name=os.getenv("EMBEDDING_MODEL_NAME")
-    )
-    
-    await analyzer.async_run(
-        input_data={
-            'task': 'Apple Inc. Investment Research',
-            'analysis_task': 'Analyze iPhone vs Services revenue'
-        },
-        max_iterations=15,
-        enable_chart=True
-    )
-    
-    # Generate report
-    generator = ReportGenerator(config=config, memory=memory,
-        use_llm_name=os.getenv("DS_MODEL_NAME"),
-        use_embedding_name=os.getenv("EMBEDDING_MODEL_NAME"))
-    
-    await generator.async_run(
-        input_data={'task': 'Apple Inc. Investment Research'},
-        enable_chart=True
-    )
+    ctx = TaskContext.from_config(config)
+    plugin = load_plugin(ctx.target_type)
+    pipeline = Pipeline(config=config, max_concurrent=3)
+    graph = await pipeline.run(ctx, plugin=plugin)
+    print(f"Done. DAG: {graph.summary()}")
 
-asyncio.run(analyze_company())
+asyncio.run(run())
 ```
 
-### Example 2: General Deep Research
+### Example 2: Single Agent Debugging
 
 ```python
-async def deep_research(query: str):
-    config = Config(config_dict={
-        'target_name': query,
-        'target_type': 'general',
-        'language': 'en',
-    })
-    
-    memory = Memory(config=config)
-    
-    # Auto-generate analysis tasks
-    tasks = await memory.generate_analyze_tasks(
-        query=query,
+import asyncio
+import os
+from src.config import Config
+from src.core.task_context import TaskContext
+from src.agents import DataAnalyzer
+
+async def debug_analyzer():
+    config = Config(config_file_path='my_config.yaml')
+    ctx = TaskContext.from_config(config)
+    # Optionally load artifacts from a previous run
+    # ctx.load_artifacts_from("outputs/.../checkpoints/pipeline.json")
+
+    analyzer = DataAnalyzer(
+        config=config,
+        task_context=ctx,
         use_llm_name=os.getenv("DS_MODEL_NAME"),
-        max_num=5
+        use_vlm_name=os.getenv("VLM_MODEL_NAME"),
+        use_embedding_name=os.getenv("EMBEDDING_MODEL_NAME"),
     )
-    
-    for task in tasks:
-        analyzer = DataAnalyzer(config=config, memory=memory, ...)
-        await analyzer.async_run(
-            input_data={'task': query, 'analysis_task': task},
-            enable_chart=False
-        )
-    
-    generator = ReportGenerator(config=config, memory=memory, ...)
-    await generator.async_run(
-        input_data={'task': query},
-        enable_chart=False,
-        add_introduction=False
+    await analyzer.async_run(
+        input_data={'task': 'Apple Inc.', 'analysis_task': 'Revenue analysis'},
+        max_iterations=10,
+        enable_chart=True,
     )
 
-asyncio.run(deep_research("Impact of AI on healthcare in 2024"))
+asyncio.run(debug_analyzer())
 ```
 
 </details>
