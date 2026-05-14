@@ -82,6 +82,33 @@ print("read OK")
         assert result["error"] is False
 
 
+class TestFilesystemMutationOps:
+    @pytest.mark.asyncio
+    async def test_os_mutation_inside_working_dir_allowed(self, executor, tmp_path):
+        code = f"""
+import os
+p = r"{tmp_path / 'inner' / 'ok.txt'}"
+os.makedirs(os.path.dirname(p), exist_ok=True)
+with open(p, "w") as f:
+    f.write("ok")
+os.remove(p)
+print("mutation OK")
+"""
+        result = await executor.execute(code)
+        assert result["error"] is False
+        assert "mutation OK" in result["stdout"]
+
+    @pytest.mark.asyncio
+    async def test_os_mutation_outside_scoped_roots_blocked(self, executor):
+        code = """
+import os
+os.makedirs("/tmp/sandbox_disallowed_dir/sub", exist_ok=True)
+"""
+        result = await executor.execute(code)
+        assert result["error"] is True
+        assert "PermissionError" in result["stderr"] or "not allowed" in result["stderr"]
+
+
 class TestExecutionTimeout:
     @pytest.mark.asyncio
     async def test_timeout_kills_execution(self, tmp_path):

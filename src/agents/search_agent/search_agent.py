@@ -1,4 +1,6 @@
 from typing import List, Dict, Any, Tuple
+from urllib.parse import urlparse
+import re
 
 from src.agents.base_agent import BaseAgent
 from src.tools.web.search_engine_requests import BingSearch, BochaSearch, SerperSearch, ExaSearch
@@ -43,32 +45,58 @@ class DeepSearchAgent(BaseAgent):
         self.prompt_loader = get_prompt_loader('search_agent', report_type=target_type)
         self.DEEP_SEARCH_PROMPT = self.prompt_loader.get_prompt('deep_search')
         self.link2name = {}
-        
+
         # Track all valid links from search results for validation
         self.valid_links = {}  # {url: {title, description, query}}
         # Track sources actually used (clicked/browsed)
         self.used_sources = {}  # {url: {title, content_summary}}
+        # Track consecutive failed clicks
+        self.failed_clicks = 0
+        # Track executed search queries for deduplication
+        self.search_queries = []
+        # Track consecutive searches returning no new unique URLs
+        self.no_new_info_count = 0
+        # Track low-quality/irrelevant click attempts
+        self.irrelevant_clicks = 0
+        self.low_quality_domains = {
+            "linkedin.com",
+            "x.com",
+            "twitter.com",
+            "reddit.com",
+            "medium.com",
+            "substack.com",
+            "quora.com",
+        }
     
     
     async def _prepare_init_prompt(self, input_data: dict) -> list[dict]:
         basic_task = input_data.get('task', '')
         query = input_data.get('query', None)
         max_iterations = input_data.get('max_iterations', 5)
+        handoff_bundle = input_data.get('handoff_bundle')
 
         if not query:
             raise ValueError("Input data must contain a 'task' key.")
         
         target_language_name = self._get_language_display_name()
             
+        prompt_text = self.DEEP_SEARCH_PROMPT.format(
+            basic_task=basic_task,
+            question=query,
+            current_time=self.current_time,
+            max_iterations=max_iterations,
+            target_language=target_language_name
+        )
+        if handoff_bundle:
+            prompt_text += (
+                "\n\n## Resume Handoff Context\n"
+                "Use the following prior evidence/dead-ends to avoid duplicate searching:\n"
+                f"{handoff_bundle}\n"
+            )
+
         return [{
             "role": "user",
-            "content": self.DEEP_SEARCH_PROMPT.format(
-                basic_task=basic_task,
-                question=query,
-                current_time=self.current_time,
-                max_iterations=max_iterations,
-                target_language=target_language_name
-            )
+            "content": prompt_text
         }]
 
     async def _handle_max_round(self, conversation_history):
@@ -83,10 +111,57 @@ class DeepSearchAgent(BaseAgent):
         )
         final_result = response
         return {'conversation_history': conversation_history, 'final_result': final_result}
+
+    @staticmethod
+    def _tokenize(text: str) -> set[str]:
+        tokens = re.findall(r"[a-zA-Z0-9\u4e00-\u9fff]+", str(text or "").lower())
+        stop = {
+            "the", "and", "for", "with", "from", "that", "this", "what", "when",
+            "where", "which", "are", "was", "were", "into", "your", "have", "has",
+            "2024", "2025", "2026",
+        }
+        return {t for t in tokens if len(t) > 1 and t not in stop}
+
+    def _relevance_score(self, query: str, title: str, desc: str, url: str) -> float:
+        q = self._tokenize(query)
+        d = self._tokenize(f"{title} {desc} {url}")
+        if not q or not d:
+            return 0.0
+        overlap = len(q.intersection(d))
+        return overlap / max(len(q), 1)
+
+    def _is_low_quality_url(self, url: str, query: str) -> bool:
+        host = urlparse(url).netloc.lower().replace("www.", "")
+        if host not in self.low_quality_domains:
+            return False
+        q = str(query or "").lower()
+        allow_terms = ("social", "tweet", "linkedin", "x.com", "twitter", "reddit")
+        return not any(term in q for term in allow_terms)
     
     async def _handle_search_action(self, action_content):
         search_engine = [item for item in self.tools if 'search' in item.name.lower()][0]
         self.logger.info(f"Search action started: query={action_content}")
+
+        # --- Query deduplication: skip near-duplicate queries ---
+        query_lower = action_content.strip().lower()
+        for prev_query in self.search_queries:
+            prev_lower = prev_query.strip().lower()
+            if query_lower in prev_lower or prev_lower in query_lower:
+                self.logger.info(f"Duplicate query detected: '{action_content}' ~ '{prev_query}'")
+                result = (
+                    f"⚠️ The query `{action_content}` is too similar to a previous query "
+                    f"`{prev_query}`. Please try a substantially different query to find "
+                    f"new information, or proceed to writing your report."
+                )
+                return {
+                    "action": "search",
+                    "action_content": action_content,
+                    "result": result,
+                    "continue": True
+                }
+        # Record this query
+        self.search_queries.append(action_content)
+
         try:
             search_result = await search_engine.api_function(action_content)
             search_result_list = []
@@ -94,7 +169,8 @@ class DeepSearchAgent(BaseAgent):
                 result = f"Query `{action_content}` returned no results; please try again."
             else:
                 result = f"Search results for `{action_content}`\n"
- 
+                new_unique_urls = 0
+
                 for idx, item in enumerate(search_result):
                     title = item.name
                     link = item.link
@@ -106,6 +182,9 @@ class DeepSearchAgent(BaseAgent):
                         'description': description
                     })
                     self.link2name[link] = title
+                    # Count URLs not already in valid_links
+                    if link not in self.valid_links:
+                        new_unique_urls += 1
                     # Track this as a valid link for later validation
                     self.valid_links[link] = {
                         'title': title,
@@ -116,16 +195,28 @@ class DeepSearchAgent(BaseAgent):
                     result += f"Title: {title}\n"
                     result += f"Link: {link}\n"
                     result += f"Summary: {description}\n\n"
-                    
+
+                # Track whether this search returned any genuinely new URLs
+                if new_unique_urls == 0:
+                    self.no_new_info_count += 1
+                else:
+                    self.no_new_info_count = 0
+
+                if self.no_new_info_count >= 2:
+                    result += (
+                        "\n\n⚠️ The last 2+ searches returned no new unique URLs. "
+                        "Consider writing your final report with the evidence already available."
+                    )
+
             for search_item in search_result:
                 if self.task_context is not None:
                     self.task_context.put("collected_data", search_item)
             self.logger.info(f"Search action done: query={action_content}, results={len(search_result)}")
-                
+
         except Exception as e:
             result = f"Query `{action_content}` failed with error: {str(e)}. Please retry."
             self.logger.error(f"Search action failed: query={action_content}, error={e}", exc_info=True)
-        
+
         # On the last iteration, append available sources reminder
         if self.current_round >= (self.max_iterations - 1):
             result += "\n\n⚠️ You have reached the maximum number of running iterations. Please provide your final report now."
@@ -140,7 +231,6 @@ class DeepSearchAgent(BaseAgent):
     async def _handle_click_action(self, action_content):
         click_engine = [item for item in self.tools if 'content fetcher' in item.name.lower()][0]
         current_task = self.current_task_data.get('task', '')
-        query = self.current_task_data.get('query', '')
 
         # Validate that the URL was from search results
         if action_content not in self.valid_links:
@@ -165,37 +255,91 @@ class DeepSearchAgent(BaseAgent):
                 "continue": True
             }
 
+        query = self.current_task_data.get('query', '')
+        info = self.valid_links.get(action_content, {})
+        title = info.get('title', '')
+        description = info.get('description', '')
+        relevance = self._relevance_score(query, title, description, action_content)
+        if self._is_low_quality_url(action_content, query):
+            self.irrelevant_clicks += 1
+            result = (
+                f"URL rejected due to low source quality for quantitative research: {action_content}\n"
+                "Use primary/authoritative sources (official reports, filings, investor relations, "
+                "regulators, multilateral institutions) unless social sources are explicitly required."
+            )
+            if self.irrelevant_clicks >= 3:
+                result += (
+                    "\n\n⚠️ Multiple low-quality clicks were blocked. "
+                    "Consider finalizing with authoritative evidence gathered so far."
+                )
+            return {
+                "action": "click",
+                "action_content": action_content,
+                "result": result,
+                "continue": True,
+            }
+
+        if relevance < 0.08:
+            self.irrelevant_clicks += 1
+            result = (
+                f"URL rejected due to low relevance score ({relevance:.2f}) for current query.\n"
+                f"Query: {query}\nURL: {action_content}\n"
+                "Select a more relevant result from prior searches or run a new targeted search."
+            )
+            if self.irrelevant_clicks >= 3:
+                result += (
+                    "\n\n⚠️ 3+ irrelevant clicks attempted. "
+                    "Either pivot search strategy or finalize the report with current evidence."
+                )
+            return {
+                "action": "click",
+                "action_content": action_content,
+                "result": result,
+                "continue": True,
+            }
+
         try:
             self.logger.info(f"Click action started: url={action_content}")
             click_result = await click_engine.api_function([action_content], f'Research goal: {current_task}; query: {query}')
             if len(click_result) == 0:
                 result = "Failed to fetch content for url: " + action_content
+                self.failed_clicks += 1
             else:
                 result = click_result[0].data
+                self.irrelevant_clicks = 0
                 # Track this as a used source with content summary
                 source_title = self.link2name.get(action_content, self.valid_links.get(action_content, {}).get('title', 'Unknown'))
                 self.used_sources[action_content] = {
                     'title': source_title,
                     'content_preview': result[:500] if len(result) > 500 else result
                 }
-                # add to memory / task_context
                 if click_result[0].link in self.link2name:
                     click_result[0].name = self.link2name[click_result[0].link]
                 if not ('error' in click_result[0].name.lower()):
                     if self.task_context is not None:
                         self.task_context.put("collected_data", click_result[0])
+                self.failed_clicks = 0
             self.logger.info(f"Click action done: url={action_content}")
             
         except Exception as e:
             result =  "Failed to fetch url: " + action_content + "\n"
             result += f'Error: {e}'
+            self.failed_clicks += 1
             self.logger.error(f"Click action failed: url={action_content}, error={e}", exc_info=True)
-        
+
+        # Warn after 3+ consecutive failed clicks
+        if self.failed_clicks >= 3:
+            result += (
+                "\n\n⚠️ WARNING: 3 or more consecutive click attempts have failed. "
+                "Please try different URLs from the search results, perform a new search, "
+                "or move on to writing your final report with the evidence already gathered."
+            )
+
         # On the last iteration, append available sources reminder
         if self.current_round >= (self.max_iterations - 1):
             result += "\n\n⚠️ You have reached the maximum number of running iterations. Please provide your final report now."
             result += self._build_available_sources_list()
-            
+
         return {
             "action": "click",
             "action_content": action_content,
@@ -232,23 +376,31 @@ class DeepSearchAgent(BaseAgent):
         return sources_text
 
     def _get_persist_extra_state(self) -> dict:
-        """Persist valid_links and used_sources for resume support."""
+        """Persist valid_links, used_sources, and tracking counters for resume support."""
         return {
             'valid_links': self.valid_links,
             'used_sources': self.used_sources,
             'link2name': self.link2name,
+            'failed_clicks': self.failed_clicks,
+            'search_queries': self.search_queries,
+            'no_new_info_count': self.no_new_info_count,
+            'irrelevant_clicks': self.irrelevant_clicks,
         }
-    
+
     def _load_persist_extra_state(self, state: dict):
-        """Restore valid_links and used_sources from checkpoint."""
+        """Restore valid_links, used_sources, and tracking counters from checkpoint."""
         self.valid_links = state.get('valid_links', {})
         self.used_sources = state.get('used_sources', {})
         self.link2name = state.get('link2name', {})
+        self.failed_clicks = state.get('failed_clicks', 0)
+        self.search_queries = state.get('search_queries', [])
+        self.no_new_info_count = state.get('no_new_info_count', 0)
+        self.irrelevant_clicks = state.get('irrelevant_clicks', 0)
 
     async def async_run(
         self, 
         input_data: dict, 
-        max_iterations: int = 30,
+        max_iterations: int = 12,
         stop_words: list[str] = [],
         echo=False,
         resume: bool = True,

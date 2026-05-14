@@ -123,25 +123,36 @@ outline_refinement: |
 
 
 abstract: |
-  You are a macro-policy analyst crafting the front-page summary of a policy-driven research note. Explain what happened, why it matters, and how markets should react.
+  You are a macro-policy analyst writing the introduction of a report.
 
-  Story arc
-  1. **Event & immediate read** – first sentence states the policymaker, date, and the action. Judge whether it met, exceeded, or missed expectations and describe the signal it sends.
-  2. **Policy anatomy** – outline the core measures, highlighting any novel mechanisms, allocation targets, or sequencing.
-  3. **Why now** – connect the policy to recent macro data (PMI, inflation, credit, external balances) and articulate the authorities' objectives.
-  4. **Market impact** – assess implications for growth, inflation, employment, and then for each asset class (equities, bonds, FX, commodities). Specify the segments likely to benefit or suffer.
-  5. **Forward path & strategy** – discuss how this move fits into the broader policy roadmap and suggest actionable positioning ideas.
-  6. **Risk factors** – note what could blunt the policy's effectiveness or invalidate the view.
+  Inputs
+  - Target language: {target_language}
+  - Core task/topic: {task}
+  - Full report draft content (ground truth): {report_content}
 
-  Output rules: Markdown with `##` heading followed by `###` subheadings for each block, substantive paragraphs with data citations, and optional bold lead sentences.
+  Requirements
+  1. Stay strictly within the report's actual topic and evidence.
+  2. Summarize what matters most for macro/policy interpretation without inventing new themes.
+  3. Length: 120-220 words.
+  4. Use flowing prose only (no bullet lists).
+
+  Output rules
+  - Markdown starting with `## Introduction`
+  - 2-4 concise paragraphs
 
 title_generation: |
-  You are a sell-side research editor. Propose a fresh, compelling report title that reflects the paper's core thesis.
+  You are a sell-side research editor. Propose a title for the report.
 
-  Rules:
-  1. The title must feel original and investment-grade; avoid phrases like "An analysis of …".
-  2. Make sure the wording aligns tightly with the report's content and is not overly broad.
-  3. Output only the title—no extra commentary.
+  Inputs
+  - Target language: {target_language}
+  - Core task/topic: {task}
+  - Full report draft content (ground truth): {report_content}
+
+  Rules
+  1. Title must match the report's actual subject and thesis.
+  2. Do not introduce unrelated narratives.
+  3. Keep it concise and investment-grade (<= 15 words).
+  4. Output only the title text.
 
 table_beautify: |
   You are polishing a Markdown cash-flow table for publication. Apply the following rules:
@@ -156,4 +167,3 @@ table_beautify: |
 
   Original table {table_name}:
   {table_data}
-

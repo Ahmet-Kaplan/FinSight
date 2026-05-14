@@ -25,6 +25,11 @@ outputs/
 **/outputs/
 **/user_configs/
 **/agent_working/
+**/state/
+**/memory/
+**/logs/
+**/run_manifest.json
+.runtime/
 *.pkl
 
 # History and cache

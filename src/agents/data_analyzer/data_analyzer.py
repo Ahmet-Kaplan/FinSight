@@ -17,6 +17,17 @@ class DataAnalyzer(BaseAgent):
     AGENT_DESCRIPTION = 'a agent that can analyze data and generate report'
     NECESSARY_KEYS = ['task', 'analysis_task']
 
+    @staticmethod
+    def _resolve_prompt_profile(target_type: str) -> str:
+        """Map pipeline target_type to available analyzer prompt packs."""
+        if not target_type:
+            return 'general'
+        if target_type in ('general', 'industry'):
+            return 'general'
+        if 'financial' in target_type or target_type in ('company', 'macro'):
+            return 'financial'
+        return 'general'
+
     def __init__(
         self,
         config,
@@ -188,9 +199,16 @@ class DataAnalyzer(BaseAgent):
     async def _prepare_init_prompt(self, input_data: dict) -> list[dict]:
         task = input_data['task']
         enable_chart = input_data['enable_chart']
+        handoff_bundle = input_data.get('handoff_bundle')
         collect_data_list = self._get_collect_data(exclude_type=['search', 'click'])
         analysis_task = f"Global Research Objective: {task}\n\nAnalysis Task: {input_data['analysis_task']}"
         data_info = await self._format_collect_data(analysis_task, collect_data_list)
+        if handoff_bundle:
+            data_info += (
+                "\n\n## Resume Handoff Context\n"
+                "Continue from these prior findings/failed paths to avoid duplicate work:\n"
+                f"{handoff_bundle}\n"
+            )
 
         # Get target language from config
         target_language_name = self._get_language_display_name()
@@ -314,9 +332,14 @@ class DataAnalyzer(BaseAgent):
         if not image_b64:
             return ""
         
+        lang = self.config.config.get('language', 'en')
+        from src.utils.language_utils import get_language_display_name
+        lang_name = get_language_display_name(lang)
+        desc_prompt = f"Give a short description in {lang_name} as the caption of this chart, explaining the key data points and takeaways. Your response should be less than 100 words."
+
         messages = [
             {"role": "user", "content": [
-                {"type": "text", "text": "Give a short description  as the caption of this chart, explaining the key data points and takeaways. Your response should be less than 100 words. Don't output any other words."},
+                {"type": "text", "text": desc_prompt + " Don't output any other words."},
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}}
             ]}
         ]
@@ -338,11 +361,19 @@ class DataAnalyzer(BaseAgent):
         Run iterative “code generation → VLM critique” cycles for a single chart.
         """
         
+        from src.utils.language_utils import get_language_display_name, get_chart_font_for_language, get_chart_label_language_instruction
+        lang = self.config.config.get('language', 'en')
+        chart_font = get_chart_font_for_language(lang)
+        label_instruction = get_chart_label_language_instruction(lang)
+
         init_prompt = self.DRAW_CHART_PROMPT.format(
             task=task,
             content=report_content,
             chart_name=chart_name,
-            data=current_variables       
+            data=current_variables,
+            target_language=get_language_display_name(lang),
+            chart_font=chart_font,
+            label_language_instruction=label_instruction
         )
         
         conversation_history = [
@@ -405,6 +436,99 @@ class DataAnalyzer(BaseAgent):
         return last_successful_code, os.path.basename(last_successful_chart_path)
 
 
+    def _validate_chart_code(self, code: str) -> tuple[bool, str]:
+        """
+        Validate generated chart code before execution.
+
+        Checks:
+          1. Syntax correctness via ast.parse().
+          2. Undefined variable references (names read but never defined).
+          3. Suspicious hardcoded numeric lists (length >= 4).
+
+        Returns:
+            (is_valid, message) — *is_valid* is False when the code references
+            undefined variables; *message* may contain warnings even when valid.
+        """
+        import ast
+        import builtins
+
+        # 1. Syntax check
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as exc:
+            return False, f"SyntaxError: {exc}"
+
+        # 2. Collect names that are *read* (Load context)
+        loaded_names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                loaded_names.add(node.id)
+
+        # 3. Collect names *defined* within the code
+        defined_names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                defined_names.add(node.id)
+            elif isinstance(node, ast.FunctionDef) or isinstance(node, ast.AsyncFunctionDef):
+                defined_names.add(node.name)
+                # Function arguments count as definitions too
+                for arg in node.args.args:
+                    defined_names.add(arg.arg)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    defined_names.add(alias.asname if alias.asname else alias.name.split('.')[0])
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    defined_names.add(alias.asname if alias.asname else alias.name)
+            elif isinstance(node, ast.For):
+                # for-loop target variables
+                if isinstance(node.target, ast.Name):
+                    defined_names.add(node.target.id)
+                elif isinstance(node.target, ast.Tuple):
+                    for elt in node.target.elts:
+                        if isinstance(elt, ast.Name):
+                            defined_names.add(elt.id)
+
+        # Known environment: executor globals + builtins + common aliases
+        env_names: set[str] = set(self.code_executor.globals.keys())
+        builtin_names: set[str] = set(dir(builtins))
+        common_aliases: set[str] = {
+            'plt', 'pd', 'np', 'sns', 'os', 'json', 're', 'math',
+            'datetime', 'matplotlib', 'seaborn', 'scipy', 'mpl',
+        }
+        known_names = env_names | builtin_names | common_aliases | defined_names
+
+        # Undefined references
+        undefined = loaded_names - known_names
+        if undefined:
+            return False, f"Undefined variables: {', '.join(sorted(undefined))}"
+
+        # 5. Warn on suspicious hardcoded numeric lists (length >= 4)
+        warnings: list[str] = []
+        ast_num_cls = getattr(ast, "Num", None)  # Removed in newer Python versions.
+        for node in ast.walk(tree):
+            if isinstance(node, ast.List) and len(node.elts) >= 4:
+                all_literal_nodes = True
+                all_numeric = True
+                for elt in node.elts:
+                    if isinstance(elt, ast.Constant):
+                        if not isinstance(elt.value, (int, float)):
+                            all_numeric = False
+                            break
+                    elif ast_num_cls is not None and isinstance(elt, ast_num_cls):
+                        # Legacy numeric literal node (older Python versions)
+                        continue
+                    else:
+                        all_literal_nodes = False
+                        break
+                if all_literal_nodes and all_numeric:
+                    warnings.append(
+                        f"Suspicious hardcoded numeric list of length {len(node.elts)} at line {node.lineno} "
+                        "— ensure data comes from the provided datasets, not fabricated values."
+                    )
+
+        return True, "; ".join(warnings)
+
     async def _generate_and_execute_code(self, conversation_history: list) -> tuple[str | None, str | None]:
         """
         Attempt (up to three times) to generate and execute the chart code.
@@ -425,6 +549,16 @@ class DataAnalyzer(BaseAgent):
                 conversation_history.append({"role": "assistant", "content": llm_response})
                 conversation_history.append({"role": "user", "content": "Your reply did not include a valid <execute> code block. Please provide Python code that draws the chart."})
                 continue  # retry
+
+            # Validate chart code before execution
+            is_valid, validation_msg = self._validate_chart_code(action_content)
+            if not is_valid:
+                self.logger.warning(f"Chart code validation failed: {validation_msg}")
+                conversation_history.append({"role": "assistant", "content": llm_response})
+                conversation_history.append({"role": "user", "content": f"Your code references variables that don't exist: {validation_msg}. Fix it."})
+                continue
+            if validation_msg:
+                self.logger.info(f"Chart code warning: {validation_msg}")
 
             code_result = await self.code_executor.execute(code=action_content)
             self.logger.debug(f"code_result: {code_result}")
@@ -448,7 +582,18 @@ class DataAnalyzer(BaseAgent):
                 continue  # retry
 
             # Confirm the file exists
-            potential_chart_name = os.path.basename(chart_filenames[0])
+            from src.utils.chart_utils import sanitize_chart_filename, contains_cjk
+            _lang = self.config.config.get('language', 'en')
+            _ascii_only = (_lang != 'zh')
+            potential_chart_name = sanitize_chart_filename(
+                os.path.basename(chart_filenames[0]), ascii_only=_ascii_only
+            )
+            # CJK guard for English runs: if LLM generated CJK in code despite instructions
+            if _lang != 'zh' and contains_cjk(action_content):
+                self.logger.warning(
+                    "CJK characters detected in chart code for English run — "
+                    "chart may contain non-English labels"
+                )
             chart_filepath = os.path.join(self.image_save_dir, potential_chart_name) 
 
             if not os.path.exists(chart_filepath):
@@ -502,6 +647,8 @@ class DataAnalyzer(BaseAgent):
         checkpoint_name: str = 'latest.pkl',
         enable_chart: bool = True,
     ) -> dict:
+        input_data = dict(input_data)
+        input_data['max_iterations'] = max_iterations
         input_data['enable_chart'] = enable_chart
         self.enable_chart = enable_chart
 

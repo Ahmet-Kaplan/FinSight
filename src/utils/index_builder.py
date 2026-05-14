@@ -3,7 +3,7 @@ import sys
 import json
 import numpy as np
 from tqdm import tqdm
-from typing import List, Tuple
+from typing import List, Tuple, Callable, Optional
 
 class IndexBuilder:
     def __init__(
@@ -122,17 +122,41 @@ class IndexBuilder:
         texts = [item.brief_str() for item in collect_data_list]
         await self._build_index(texts, batch_size, n_retries)
 
-    async def _build_index(self, texts: List[str], batch_size: int=32, n_retries: int=2):
+    async def _build_index(
+        self,
+        texts: List[str],
+        batch_size: int = 32,
+        n_retries: int = 2,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        progress_desc: str = "Building index",
+        use_tqdm: bool = True,
+    ):
         """Internal unified method to build the embeddings index."""
         self.embeddings = [] # Clear existing embeddings before building a new index
         # Clear search cache since index is being rebuilt - cached ids would be invalid
         if isinstance(self.cache, dict) and "search" in self.cache:
             self.cache["search"] = {}
-        
-        for i in tqdm(range(0, len(texts), batch_size), desc="Building index"):
+
+        total_batches = 0 if not texts else (len(texts) + batch_size - 1) // batch_size
+        if callable(progress_callback):
+            try:
+                progress_callback(0, total_batches)
+            except Exception:
+                pass
+
+        iter_range = range(0, len(texts), batch_size)
+        if use_tqdm:
+            iter_range = tqdm(iter_range, desc=progress_desc)
+
+        for batch_idx, i in enumerate(iter_range, start=1):
             batch = texts[i : i + batch_size]
             batch_embeddings = await self._get_embeddings_batch(batch, n_retries)
             self.embeddings.extend(batch_embeddings)
+            if callable(progress_callback):
+                try:
+                    progress_callback(batch_idx, total_batches)
+                except Exception:
+                    pass
 
         # Save index to file after building
         self._save_index()

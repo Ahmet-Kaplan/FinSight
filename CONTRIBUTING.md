@@ -57,6 +57,29 @@ python -m pytest tests/ --cov=src --cov-report=term-missing
 - Update documentation if adding new features.
 - Reference relevant issues in the PR description.
 
+## Bug And Improvement Logging Policy
+
+For non-trivial fixes or runtime behavior changes, update both logs as applicable:
+
+- Bug fixes / known operational defects:
+  - `docs/BUG_LOG.md`
+- Reliability, observability, or DX enhancements:
+  - `docs/IMPROVEMENTS_LOG.md`
+
+Minimum entry fields:
+
+- `Bug Log`: `Bug`, `Cause`, `Change`, `Validation`, `Files`, `Reference`
+- `Improvements Log`: `Improvement`, `Why`, `Change`, `Impact`, `Files`, `Reference`
+
+Recommended metadata for both logs:
+
+- `ID` (`BUG-YYYYMMDD-XX` / `IMP-YYYYMMDD-XX`)
+- `Date`
+- `Area`
+- `Status` (for bug entries)
+
+Use append-only ordering with newest entries first.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the GPL-3.0 License.

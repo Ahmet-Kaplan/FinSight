@@ -133,26 +133,36 @@ outline_refinement: |
 
 
 abstract: |
-  You are the lead author of the "Global AI Governance 2025" report. Summarize the global landscape, breakthroughs, and strategic outlook for AI governance in a concise executive summary.
+  You are a governance-policy editor writing the introduction of a report.
 
-  Required components
-  1. **Headline development** – open with the most consequential global policy or governance milestone, naming the authority, timing, and overarching verdict.
-  2. **Policy landscape** – decode the measures in that event plus any bundled initiatives, stressing how they diverge from prior frameworks.
-  3. **Comparative governance** – contrast the philosophies and priorities of the US, EU, China (and other major blocs if relevant), citing statistics on regulatory adoption, enforcement, or funding.
-  4. **Commercial & societal impact** – explain how AI commercialization is reshaping governance debates (content provenance, watermarking, model audits) and detail societal consequences such as labor shifts, misinformation, or IP disputes with supporting data.
-  5. **Research frontiers** – summarize notable academic or institutional studies that push governance theory forward, noting convergences/divergences across regions.
-  6. **Forward strategy** – describe the likely evolution of global coordination, standards, and enforcement, and outline strategic recommendations for policymakers and enterprises.
-  7. **Risk statement** – concisely list the uncertainties that could derail governance progress.
+  Inputs
+  - Target language: {target_language}
+  - Core task/topic: {task}
+  - Full report draft content (ground truth): {report_content}
 
-  Output: Markdown starting with `##` and self-authored `###` subheadings that cover every component, each with information-rich paragraphs and optional bold thesis sentences.
+  Requirements
+  1. Stay strictly grounded in the provided report content.
+  2. Do not hard-code any fixed topic/year unless present in the report.
+  3. Length: 100-180 words.
+  4. Use clear prose only (no bullet lists).
+
+  Output
+  - Markdown starting with `## Introduction`
+  - 2-3 short paragraphs
 
 title_generation: |
-  You are a sell-side research editor. Propose a fresh, compelling report title that reflects the paper's core thesis.
+  You are a governance research editor. Propose a title for this report.
 
-  Rules:
-  1. The title must feel original and investment-grade; avoid phrases like "An analysis of …".
-  2. Make sure the wording aligns tightly with the report's content and is not overly broad.
-  3. Output only the title—no extra commentary.
+  Inputs
+  - Target language: {target_language}
+  - Core task/topic: {task}
+  - Full report draft content (ground truth): {report_content}
+
+  Rules
+  1. Keep the title tightly aligned with the report content.
+  2. Avoid generic wording and avoid introducing unrelated themes.
+  3. Keep it concise (<= 15 words).
+  4. Output only the title text.
 
 table_beautify: |
   You are polishing a Markdown cash-flow table for publication. Apply the following rules:
@@ -167,4 +177,3 @@ table_beautify: |
 
   Original table {table_name}:
   {table_data}
-

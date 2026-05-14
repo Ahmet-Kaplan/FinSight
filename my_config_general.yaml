@@ -1,0 +1,35 @@
+profile_name: general
+target_type: general
+language: en
+reference_doc_path: src/template/report_template.docx
+outline_template_path: src/template/company_outline.md
+
+custom_collect_tasks:
+  - Definitions, scope boundaries, and taxonomy for the research topic
+  - Authoritative datasets and official publications for core metrics
+  - Historical trend data and milestone events over at least 5 years
+  - Key stakeholder landscape and role mapping
+  - Regional comparison data across major geographies
+  - Policy and regulatory context from primary sources
+  - Technology, product, or process adoption metrics
+  - Cost, productivity, and performance benchmark data
+  - Recent case studies and best-practice examples with outcomes
+  - Forecast ranges from reputable institutions
+
+custom_analysis_tasks:
+  - Clarify core questions and decision criteria for the report objective
+  - Synthesize historical evolution and current-state baseline
+  - Analyze key causal drivers and interdependencies
+  - Compare strategic alternatives and trade-offs
+  - Assess risks, constraints, and implementation frictions
+  - Evaluate regional or segment-level divergences
+  - Develop base, upside, and downside scenario frameworks
+  - Translate evidence into actionable recommendations
+  - Define leading indicators to track thesis validation
+  - Deliver a concise conclusion with next-step priorities
+
+use_collect_data_cache: true
+use_analysis_cache: true
+use_report_outline_cache: true
+use_full_report_cache: true
+use_post_process_cache: true

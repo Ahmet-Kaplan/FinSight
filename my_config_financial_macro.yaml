@@ -1,0 +1,35 @@
+profile_name: financial_macro
+target_type: financial_macro
+language: en
+reference_doc_path: src/template/report_template.docx
+outline_template_path: src/template/company_outline.md
+
+custom_collect_tasks:
+  - Policy-rate paths, real-rate estimates, and central bank forward guidance
+  - Government bond curves, term premia, and breakeven inflation series
+  - Credit spreads, default rates, and issuance volume by rating bucket
+  - Global liquidity indicators and cross-currency funding stress metrics
+  - Equity risk premium proxies and earnings revision breadth
+  - FX volatility, carry metrics, and capital flow indicators
+  - Commodity and energy price dynamics with inflation pass-through metrics
+  - Fiscal impulse estimates and sovereign debt sustainability data
+  - Bank lending standards and private-sector credit conditions
+  - Consensus macro-financial outlooks from major institutions
+
+custom_analysis_tasks:
+  - Assess macro regime probabilities such as disinflation, reflation, or stagflation
+  - Evaluate policy-path implications for duration and curve shape
+  - Analyze credit-cycle risk and spread compensation adequacy
+  - Assess equity valuation sensitivity to real rates and growth revisions
+  - Evaluate FX regime shifts and carry-trade vulnerability
+  - Analyze liquidity and funding channels as systemic risk amplifiers
+  - Build 3-year base, bull, and bear macro-financial scenarios
+  - Translate scenarios into multi-asset allocation implications
+  - Define event-risk map and trigger thresholds for positioning changes
+  - Conclude with a risk-managed portfolio stance and hedge framework
+
+use_collect_data_cache: true
+use_analysis_cache: true
+use_report_outline_cache: true
+use_full_report_cache: true
+use_post_process_cache: true
